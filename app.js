@@ -1,7 +1,7 @@
-/* App de campo — Fazenda Paquetá. Telas estáticas; dados vão para a caixa postal no Google do Wagner.
+/* App de campo — WM e TR - Paquetá (mesma área, rebanhos separados). Telas estáticas; dados vão para a caixa postal no Google do Wagner.
    Sem sinal: guarda no celular (fila) e envia depois, sem duplicar (cada lançamento tem um código único). */
 "use strict";
-const VERSAO = "1.1.0";
+const VERSAO = "1.2.0";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -76,6 +76,7 @@ function sair(perguntar = true) {
 const fila = () => guarda.ler("fila", []);
 function enfileirar(tipo, dados) {
   const f = fila();
+  if (TIPOS_COM_PROP.includes(tipo)) { exigir(prop(), "Escolha a propriedade (WM ou TR - Paquetá) no Início."); dados = { ...dados, propriedade: prop() }; }
   f.push({ id: uid(), tipo, dados, criado_em: new Date().toISOString(), versao: VERSAO });
   if (!guarda.gravar("fila", f)) throw new Error("Memória do celular cheia: não consegui guardar. Envie o que está pendente com sinal.");
   atualizarEstado();
@@ -131,7 +132,12 @@ async function carregarResumo(forcar = false) {
     throw e;
   }
 }
-const animais = r => (r && r.animais) || [];
+/* propriedade: WM (confinado) ou TR (TR - Paquetá, a pasto). Escolhida no Início. */
+const PROPS = { WM: { nome: "WM", titulo: "WM (confinado)", cor: "#1f6f43" }, TR: { nome: "TR - Paquetá", titulo: "TR - Paquetá (a pasto)", cor: "#9a4f12" } };
+const prop = () => { const p = guarda.ler("prop", ""); return PROPS[p] ? p : ""; };
+const TIPOS_COM_PROP = ["leite", "trato", "ocorrencia"];
+const animais = r => { const p = prop(); if (!r || !p) return []; const pp = r.propriedades && r.propriedades[p]; return pp ? (pp.animais || []) : (p === "WM" ? (r.animais || []) : []); };
+const rotAnimal = a => (a.codigo || a.brinco) + (a.nome ? " — " + a.nome : "");
 const lactantes = r => animais(r).filter(a => a.categoria === "vaca" && a.estado !== "seca");
 
 /* ---------------------------------------------------------------- navegação */
@@ -161,7 +167,7 @@ TELAS.convite = async ({ codigo } = {}) => {
   try { info = await api("convite_info", { codigo }); }
   catch (e) { app.innerHTML = `<h1>Convite</h1><div class="erro">${esc(e.message)}</div><button class="btn larga" id="ja">Já tenho cadastro: entrar</button>`; $("#ja").onclick = () => ir("entrar"); return; }
   app.innerHTML = `<h1>Olá, ${esc(info.nome)}!</h1>
-    <p class="sub">Crie seu acesso ao app de campo da Fazenda Paquetá. Você vai entrar com o seu CPF e a senha que criar agora.</p>
+    <p class="sub">Crie seu acesso ao app de campo (WM e TR - Paquetá). Você vai entrar com o seu CPF e a senha que criar agora.</p>
     <form id="f" class="cartao" autocomplete="on">
       <label for="cpf">Seu CPF</label><input id="cpf" name="cpf" inputmode="numeric" autocomplete="username" placeholder="000.000.000-00" required>
       <label for="s1">Crie uma senha</label><input id="s1" type="password" autocomplete="new-password" minlength="6" required>
@@ -218,6 +224,8 @@ TELAS.inicio = async () => {
   const prod = (r.producao || []).slice(-5).reverse();
   app.innerHTML = `
     <h1>${saudacao()}, ${esc(s.nome.split(" ")[0])}</h1>
+    <div class="prop-sel">${Object.entries(PROPS).map(([k, p]) => `<button data-prop="${k}" class="${prop() === k ? "on" : ""}" style="${prop() === k ? `background:${p.cor};border-color:${p.cor};color:#fff` : `border-color:${p.cor}`}">${esc(p.nome)}</button>`).join("")}</div>
+    <p class="sub">${prop() ? "Lançamentos vão para <b>" + esc(PROPS[prop()].titulo) + "</b>." : "<b>Escolha acima para qual propriedade vai lançar.</b>"}</p>
     <p class="sub">${r.gerado_em ? "Dados da fazenda atualizados em " + esc(r.gerado_em) : r.semRede ? "Sem sinal: os lançamentos ficam guardados e vão depois." : "O resumo da fazenda aparece depois que o notebook sincronizar."}</p>
     <div class="grade">
       <button class="botao-grande" data-ir="leite"><span class="ic">🥛</span><b>Leite</b><small>medição do dia</small></button>
@@ -237,6 +245,7 @@ TELAS.inicio = async () => {
     ${dono && r.financeiro ? `<h2>Dinheiro (${esc(r.financeiro.mes || "")})</h2><div class="cartao">${(r.financeiro.linhas || []).map(l => `<div class="resumo-linha"><span>${esc(l[0])}</span><b>${esc(l[1])}</b></div>`).join("")}</div>` : ""}
     <div class="rodape"><button id="atualizar">Atualizar</button> · <button id="aparencia">Aparência</button> · <button id="sair">Sair</button><br>versão ${VERSAO}</div>`;
   $$("[data-ir]").forEach(b => b.onclick = () => ir(b.dataset.ir));
+  $$("[data-prop]").forEach(b => b.onclick = () => { guarda.gravar("prop", b.dataset.prop); mostrar("inicio"); });
   $$("[data-concluir]").forEach(b => b.onclick = () => {
     const t = tarefas.find(x => x.id === b.dataset.concluir);
     if (!confirm(`Marcar como feita: "${t.texto}"?`)) return;
@@ -261,16 +270,25 @@ TELAS.aparencia = async () => {
 TELAS.semconvite_aparencia = TELAS.aparencia;
 
 /* ---------------------------------------------------------------- formulário genérico */
+function faixaProp() { const p = PROPS[prop()]; return p ? `<div class="faixa-prop" style="background:${p.cor}">Lançando para: <b>${esc(p.titulo)}</b> <button type="button" class="link" id="trocar-prop">trocar</button></div>` : ""; }
+function escolherProp(depois) {
+  app.innerHTML = `<h1>Para qual propriedade?</h1><p class="sub">Os dados de uma nunca entram na outra. Dá para trocar depois no Início.</p>
+    <div class="grade">${Object.entries(PROPS).map(([k, p]) => `<button class="botao-grande" data-p="${k}" style="border-color:${p.cor}"><span class="ic" style="color:${p.cor}">■</span><b>${esc(p.nome)}</b><small>${k === "TR" ? "gado a pasto" : "gado confinado"}</small></button>`).join("")}</div>`;
+  $$("[data-p]").forEach(b => b.onclick = () => { guarda.gravar("prop", b.dataset.p); aviso("Agora: " + PROPS[b.dataset.p].titulo); depois(); });
+}
 function formulario(titulo, corpoHtml, coletar, resumoTxt, tipo, depois) {
-  app.innerHTML = `${voltar()}<h1>${titulo}</h1><form id="f" class="cartao" novalidate>${corpoHtml}<button class="btn prim larga">Revisar</button><div id="msg"></div></form>`;
+  if (TIPOS_COM_PROP.includes(tipo) && !prop()) return escolherProp(() => mostrar(location.hash.slice(1) || "inicio"));
+  const comProp = TIPOS_COM_PROP.includes(tipo);
+  app.innerHTML = `${voltar()}${comProp ? faixaProp() : ""}<h1>${titulo}</h1><form id="f" class="cartao" novalidate>${corpoHtml}<button class="btn prim larga">Revisar</button><div id="msg"></div></form>`;
   ligarVoltar();
+  const tp = $("#trocar-prop"); if (tp) tp.onclick = () => escolherProp(() => mostrar(location.hash.slice(1) || "inicio"));
   const f = $("#f");
   f.onsubmit = e => {
     e.preventDefault();
     $("#msg").innerHTML = "";
     let dados;
     try { dados = coletar(f); } catch (er) { $("#msg").innerHTML = `<div class="erro">${esc(er.message)}</div>`; return; }
-    app.innerHTML = `<h1>Confira</h1><div class="cartao pre">${esc(resumoTxt(dados))}</div>
+    app.innerHTML = `${comProp ? faixaProp() : ""}<h1>Confira</h1><div class="cartao pre">${comProp ? "PROPRIEDADE: " + esc(PROPS[prop()].titulo) + "\n\n" : ""}${esc(resumoTxt(dados))}</div>
       <div class="linha-botoes"><button class="btn" id="corrigir">Corrigir</button><button class="btn prim" id="confirmar">Confirmar e enviar</button></div>`;
     $("#corrigir").onclick = () => { formulario(titulo, corpoHtml, coletar, resumoTxt, tipo, depois); preencher($("#f"), dados); if (depois) depois($("#f")); };
     $("#confirmar").onclick = () => {
@@ -299,7 +317,7 @@ const marcados = (f, n) => $$(`[name="${n}"]:checked`, f).map(c => c.value);
 const campoData = (rot = "Data") => `<label>${rot}</label><input type="date" name="data" value="${hoje()}" max="${hoje()}" required>`;
 const radios = (nome, ops, sel = "") => `<div class="opcoes">${ops.map(([v, n]) => `<label><input type="radio" name="${nome}" value="${esc(v)}" ${v === sel ? "checked" : ""}>${esc(n)}</label>`).join("")}</div>`;
 const checks = (nome, ops) => `<div class="opcoes">${ops.map(([v, n]) => `<label><input type="checkbox" name="${nome}" value="${esc(v)}">${esc(n)}</label>`).join("")}</div>`;
-const optAnimais = (lista, rot = "Escolha o animal") => `<option value="">${rot}…</option>` + lista.map(a => `<option value="${esc(a.brinco)}">${esc(a.brinco)}${a.nome ? " — " + esc(a.nome) : ""}${a.categoria !== "vaca" ? " (" + esc(a.categoria) + ")" : ""}</option>`).join("");
+const optAnimais = (lista, rot = "Escolha o animal") => `<option value="">${rot}…</option>` + lista.map(a => `<option value="${esc(a.brinco)}">${esc(rotAnimal(a))}${a.categoria !== "vaca" ? " (" + esc(a.categoria) + ")" : ""}</option>`).join("");
 function dataOk(d) { exigir(/^\d{4}-\d{2}-\d{2}$/.test(d), "Informe a data."); exigir(d <= hoje(), "A data não pode ser no futuro."); return d; }
 
 /* ---------------------------------------------------------------- leite */
@@ -310,7 +328,7 @@ TELAS.leite = async () => {
   formulario("Leite do dia", `${campoData("Data da ordenha")}
     ${duas ? `<label>Qual ordenha</label>${radios("ordenha", [["1", "Manhã"], ["2", "Tarde"]], new Date().getHours() < 12 ? "1" : "2")}` : ""}
     <label>Litros por vaca</label>
-    ${vacas.length ? `<div class="vacas">${vacas.map(a => `<label><span><b>${esc(a.brinco)}</b> ${esc(a.nome || "")}</span><input name="v_${esc(a.brinco)}" inputmode="decimal" placeholder="litros"></label>`).join("")}</div><p class="nota">Deixe em branco a vaca que não ordenhou.</p>`
+    ${vacas.length ? `<div class="vacas">${vacas.map(a => `<label><span><b>${esc(a.codigo || a.brinco)}</b> ${esc(a.nome || "")}</span><input name="v_${esc(a.brinco)}" inputmode="decimal" placeholder="litros"></label>`).join("")}</div><p class="nota">Deixe em branco a vaca que não ordenhou.</p>`
       : `<p class="nota">A lista de vacas aparece depois que o notebook sincronizar. Por enquanto, lance o total do tanque.</p>`}
     <label>Total do tanque (litros)</label><input name="total" inputmode="decimal" placeholder="se mediu">
     <label>Observação</label><input name="obs" placeholder="vaca que não ordenhou, leite separado…">`,

@@ -102,3 +102,9 @@ input:focus, select:focus, textarea:focus { outline: 3px solid color-mix(in srgb
 .tema-op .amostra { display: flex; width: 64px; height: 36px; border-radius: 8px; overflow: hidden; flex: none; border: 1px solid rgba(0, 0, 0, .2); }
 .tema-op .amostra span { flex: 1; }
 .tarefa small { display: block; }
+
+/* propriedade (WM | TR - Paquetá) */
+.prop-sel{display:flex;gap:8px;margin:6px 0 4px}
+.prop-sel button{flex:1;padding:12px;border:2px solid;border-radius:12px;background:transparent;color:inherit;font-weight:700;font-size:16px}
+.faixa-prop{color:#fff;border-radius:10px;padding:9px 12px;margin:8px 0 6px;font-size:15px}
+.faixa-prop .link{background:none;border:0;color:#fff;text-decoration:underline;margin-left:6px;font-size:14px}
