@@ -1,7 +1,7 @@
 /* App de campo — WM e TR - Paquetá (mesma área, rebanhos separados). Telas estáticas; dados vão para a caixa postal no Google do Wagner.
    Sem sinal: guarda no celular (fila) e envia depois, sem duplicar (cada lançamento tem um código único). */
 "use strict";
-const VERSAO = "1.4.0";
+const VERSAO = "1.4.1";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -376,7 +376,7 @@ TELAS.ficha = async ({ brinco } = {}) => {
     ${(f.alertas || []).length ? `<h2>Próximos passos</h2><div class="cartao">${f.alertas.map(x => `<div class="alerta"><span class="ponto p-${x.atrasado ? "vermelho" : "azul"}"></span><div><b>${esc(x.tipo)} · ${esc(x.data)}</b><small>${esc(x.texto)}</small></div></div>`).join("")}</div>` : ""}
     ${(f.leite30 || []).length ? `<h2>Leite (30 dias)</h2><div class="cartao">${barras(f.leite30.slice().reverse().map(x => ({ r: x.curta || x.data, v: x.litros })), " L")}</div>` : ""}
     <h2>Cadastro</h2><div class="cartao">${cad.map(([k, v]) => linhaR(k, v)).join("")}${a.observacoes ? `<p class="sub">${esc(a.observacoes)}</p>` : ""}</div>
-    ${(f.lactacoes || []).length ? `<h2>Lactações</h2><div class="cartao">${tabC(f.lactacoes, [["n", "Nº"], ["inicio", "Início"], ["del", "DEL"], ["litros", "Litros"], ["media", "Média"]])}</div>` : ""}
+    ${(f.lactacoes || []).length ? `<h2>Lactações</h2><div class="cartao">${tabC(f.lactacoes.map(l => ({ ...l, pl: l.pl305 != null ? num1(l.pl305, 0) + (l.pl305_tipo === "parcial" ? " parc." : "") : (l.pl305_tipo === "faltam lançamentos" ? "falta dado" : "—"), ps: l.persist != null ? l.persist + "%" : "—" })), [["n", "Nº"], ["inicio", "Início"], ["del", "DEL"], ["litros", "Litros"], ["media", "Média"], ["pl", "305 d"], ["ps", "Persist."]])}</div>` : ""}
     <h2>Reprodução</h2><div class="cartao">${tabC((f.repro || []).slice().reverse(), [["data_br", "Data"], ["evento", "Evento"], ["detalhe", "Detalhe"], ["resultado", "Resultado"]])}</div>
     <h2>Sanidade</h2><div class="cartao">${tabC((f.sanidade || []).slice().reverse(), [["data_br", "Data"], ["tipo", "Tipo"], ["produto", "Produto"], ["liberacao_leite_br", "Leite liberado"]])}</div>
     ${(f.ccs || []).length ? `<h2>CCS individual</h2><div class="cartao">${tabC(f.ccs.map(x => ({ d: x.data_br, v: num1(x.ccs, 0) + " mil" + (x.alta ? " ✖" : "") })), [["d", "Data"], ["v", "CCS"]])}</div>` : ""}
