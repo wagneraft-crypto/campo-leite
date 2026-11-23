@@ -1,7 +1,7 @@
 /* App de campo — WM e TR - Paquetá (mesma área, rebanhos separados). Telas estáticas; dados vão para a caixa postal no Google do Wagner.
    Sem sinal: guarda no celular (fila) e envia depois, sem duplicar (cada lançamento tem um código único). */
 "use strict";
-const VERSAO = "1.3.0";
+const VERSAO = "1.3.1";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -107,7 +107,7 @@ function atualizarEstado() {
   const n = fila().length, el = $("#estado-rede");
   el.innerHTML = !navigator.onLine ? `<span class="off">sem sinal</span>${n ? ` <span class="pend">${n} guardado${n > 1 ? "s" : ""}</span>` : ""}`
     : n ? `<span class="pend">${enviando ? "enviando…" : n + " a enviar"}</span>` : "";
-  const s = sessao(); $("#quem").textContent = s ? `${s.nome}${s.papel === "dono" ? " · dono" : ""}` : "App de campo";
+  const s = sessao(); $("#quem").textContent = s ? `${s.nome}${s.papel === "dono" ? " · dono" : ""}` : "Fazenda WM";
 }
 addEventListener("online", enviarFila);
 addEventListener("offline", atualizarEstado);
@@ -570,7 +570,7 @@ TELAS.ajustes = async () => {
   app.innerHTML = `${voltar()}<h1>Avisos</h1>
     <div class="cartao"><b>E-mail</b><p class="sub">Ligado: cada envio do app gera um e-mail para você.</p></div>
     <div class="cartao"><b>Telegram ${r.telegram ? "— ligado ✔" : ""}</b>
-      <p class="sub">1) No Telegram, procure <b>@BotFather</b>, mande <b>/newbot</b>, escolha um nome (ex.: Fazenda Paquetá Avisos) e um usuário terminado em "bot".<br>
+      <p class="sub">1) No Telegram, procure <b>@BotFather</b>, mande <b>/newbot</b>, escolha um nome (ex.: Fazenda WM Avisos) e um usuário terminado em "bot".<br>
       2) Copie o <b>token</b> que ele mandar (números, dois-pontos e letras) e cole aqui.</p>
       <label>Token do robô</label><input id="tok" autocomplete="off" placeholder="123456789:AA…">
       <button class="btn prim larga" id="salvar">Salvar token</button>

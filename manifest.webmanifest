@@ -1,7 +1,7 @@
 {
-  "name": "Campo — Fazenda Paquetá",
-  "short_name": "Fazenda Paquetá",
-  "description": "Lançamentos de campo da Fazenda Paquetá: leite, trato, ocorrências e chuva.",
+  "name": "Fazenda WM",
+  "short_name": "Fazenda WM",
+  "description": "Fazenda WM — lançamentos de campo (leite, trato, ocorrências, chuva) e consulta do dono. Módulos Leite WM e Paquetá.",
   "lang": "pt-BR",
   "start_url": "./#inicio",
   "scope": "./",
