@@ -1,7 +1,7 @@
 /* App de campo — WM e TR - Paquetá (mesma área, rebanhos separados). Telas estáticas; dados vão para a caixa postal no Google do Wagner.
    Sem sinal: guarda no celular (fila) e envia depois, sem duplicar (cada lançamento tem um código único). */
 "use strict";
-const VERSAO = "1.2.0";
+const VERSAO = "1.3.0";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -137,6 +137,13 @@ const PROPS = { WM: { nome: "WM", titulo: "WM (confinado)", cor: "#1f6f43" }, TR
 const prop = () => { const p = guarda.ler("prop", ""); return PROPS[p] ? p : ""; };
 const TIPOS_COM_PROP = ["leite", "trato", "ocorrencia"];
 const animais = r => { const p = prop(); if (!r || !p) return []; const pp = r.propriedades && r.propriedades[p]; return pp ? (pp.animais || []) : (p === "WM" ? (r.animais || []) : []); };
+/* Números da propriedade escolhida. Sem "propriedades" (caixa postal antiga), só a WM tem números — nunca mostrar
+   os da WM quando a escolhida é a TR. */
+const dadosProp = r => {
+  const p = prop(); if (!r || !p) return null;
+  if (r.propriedades && r.propriedades[p] && "producao" in r.propriedades[p]) return r.propriedades[p];
+  return p === "WM" ? { animais: r.animais || [], producao: r.producao || [], alertas: r.alertas || [], financeiro: r.financeiro || null } : { animais: animais(r), producao: [], alertas: [], financeiro: null, antigo: true };
+};
 const rotAnimal = a => (a.codigo || a.brinco) + (a.nome ? " — " + a.nome : "");
 const lactantes = r => animais(r).filter(a => a.categoria === "vaca" && a.estado !== "seca");
 
@@ -220,8 +227,10 @@ TELAS.inicio = async () => {
   const dono = s.papel === "dono";
   const feitas = new Set(guarda.ler("tarefas_feitas", []));
   const tarefas = (r.tarefas || []).filter(t => t.situacao !== "feita");
-  const alertas = r.alertas || [];
-  const prod = (r.producao || []).slice(-5).reverse();
+  const dp = dadosProp(r) || { producao: [], alertas: [] };
+  const alertas = dp.alertas || [];
+  const prod = (dp.producao || []).slice(-5).reverse();
+  const nomeP = prop() ? PROPS[prop()].nome : "";
   app.innerHTML = `
     <h1>${saudacao()}, ${esc(s.nome.split(" ")[0])}</h1>
     <div class="prop-sel">${Object.entries(PROPS).map(([k, p]) => `<button data-prop="${k}" class="${prop() === k ? "on" : ""}" style="${prop() === k ? `background:${p.cor};border-color:${p.cor};color:#fff` : `border-color:${p.cor}`}">${esc(p.nome)}</button>`).join("")}</div>
@@ -232,17 +241,19 @@ TELAS.inicio = async () => {
       <button class="botao-grande" data-ir="trato"><span class="ic">🌵</span><b>Trato</b><small>palma, ração, bagaço</small></button>
       <button class="botao-grande" data-ir="ocorrencia"><span class="ic">🐄</span><b>Ocorrência</b><small>cio, parto, doente, remédio</small></button>
       <button class="botao-grande" data-ir="chuva"><span class="ic">🌧️</span><b>Chuva</b><small>pluviômetro</small></button>
-      ${dono ? `<button class="botao-grande" data-ir="comprovante"><span class="ic">🧾</span><b>Comprovante</b><small>foto ou PDF de pagamento</small></button>
+      ${dono ? `<button class="botao-grande" data-ir="consulta"><span class="ic">📊</span><b>Consulta</b><small>rebanho, fichas, leite, dinheiro</small></button>
+      <button class="botao-grande" data-ir="comprovante"><span class="ic">🧾</span><b>Comprovante</b><small>foto ou PDF de pagamento</small></button>
       <button class="botao-grande" data-ir="ajustes"><span class="ic">⚙️</span><b>Avisos</b><small>e-mail e Telegram</small></button>` : ""}
     </div>
     ${fila().length ? `<div class="cartao" style="margin-top:12px"><b>${fila().length} lançamento(s) guardado(s) neste celular</b><p class="sub">Vão sozinhos quando tiver sinal.</p><button class="btn peq" id="enviar-ja">Enviar agora</button></div>` : ""}
     <h2>Minhas tarefas</h2>
     <div class="cartao">${tarefas.length ? tarefas.map(t => `<div class="tarefa ${feitas.has(t.id) ? "feita" : ""}"><div><b>${esc(t.texto)}</b><small class="sub">${t.prazo ? "até " + esc(t.prazo) : ""}${dono && t.para ? " · " + esc(t.para) : ""}</small></div>
       ${feitas.has(t.id) ? `<small class="sub">feita ✔</small>` : `<button class="btn peq" data-concluir="${esc(t.id)}">Concluir</button>`}</div>`).join("") : `<p class="sub">Nenhuma tarefa.</p>`}</div>
-    <h2>Avisos da fazenda</h2>
+    <h2>Avisos${nomeP ? " — " + esc(nomeP) : ""}</h2>
     <div class="cartao">${alertas.length ? alertas.map(a => `<div class="alerta"><span class="ponto p-${esc(a.nivel || "azul")}"></span><div><b>${esc(a.titulo)}</b><small>${esc(a.detalhe || "")}</small></div></div>`).join("") : `<p class="sub">Nada para avisar.</p>`}</div>
-    ${prod.length ? `<h2>Leite dos últimos dias</h2><div class="cartao"><table class="tab">${prod.map(p => `<tr><td>${esc(p.data)}</td><td class="n"><b>${esc(virgula(p.litros))} L</b></td></tr>`).join("")}</table></div>` : ""}
-    ${dono && r.financeiro ? `<h2>Dinheiro (${esc(r.financeiro.mes || "")})</h2><div class="cartao">${(r.financeiro.linhas || []).map(l => `<div class="resumo-linha"><span>${esc(l[0])}</span><b>${esc(l[1])}</b></div>`).join("")}</div>` : ""}
+    ${prod.length ? `<h2>Leite dos últimos dias${nomeP ? " — " + esc(nomeP) : ""}</h2><div class="cartao"><table class="tab">${prod.map(p => `<tr><td>${esc(p.data)}</td><td class="n"><b>${p.litros != null ? esc(virgula(p.litros)) + " L" : esc(virgula(p.kg)) + " kg (leiteiro)"}</b></td></tr>`).join("")}</table></div>` : ""}
+    ${dono && dp.financeiro ? `<h2>Dinheiro — ${esc(nomeP)} (${esc(dp.financeiro.mes || "")})</h2><div class="cartao">${(dp.financeiro.linhas || []).map(l => `<div class="resumo-linha"><span>${esc(l[0])}</span><b>${esc(l[1])}</b></div>`).join("")}</div>` : ""}
+    ${dono && dp.antigo ? `<p class="sub">Os números da ${esc(nomeP)} aparecem depois que a caixa postal for atualizada (versão 1.3).</p>` : ""}
     <div class="rodape"><button id="atualizar">Atualizar</button> · <button id="aparencia">Aparência</button> · <button id="sair">Sair</button><br>versão ${VERSAO}</div>`;
   $$("[data-ir]").forEach(b => b.onclick = () => ir(b.dataset.ir));
   $$("[data-prop]").forEach(b => b.onclick = () => { guarda.gravar("prop", b.dataset.prop); mostrar("inicio"); });
@@ -257,6 +268,93 @@ TELAS.inicio = async () => {
   $("#sair").onclick = () => sair(true);
   $("#aparencia").onclick = () => ir("aparencia");
 };
+/* ---------------------------------------------------------------- consulta do dono (só leitura) */
+const GRUPOS_C = { lactacao: "Em lactação", seca: "Secas", indefinida: "Vacas sem situação", novilhas: "Novilhas", bezerras: "Bezerras", bezerros: "Bezerros", machos: "Touro e garrotes", outros: "Outros", planejada: "A chegar" };
+const real = v => v == null || v === "" ? "—" : "R$ " + Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const num1 = (v, d = 1) => v == null || v === "" ? "—" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: d });
+const linhaR = (k, v) => `<div class="resumo-linha"><span>${esc(k)}</span><b>${esc(v)}</b></div>`;
+const tabC = (linhas, cols, vazio = "Nada registrado.") => !linhas || !linhas.length ? `<p class="sub">${vazio}</p>` :
+  `<div class="rolagem"><table class="tab"><tr>${cols.map(c => `<th>${esc(c[1])}</th>`).join("")}</tr>${linhas.map(l => `<tr>${cols.map(c => `<td>${esc(l[c[0]] ?? "")}</td>`).join("")}</tr>`).join("")}</table></div>`;
+const barras = (pts, unid) => { const max = Math.max(...pts.map(p => p.v || 0), 1); return `<div class="barras">${pts.map(p => `<div class="barra-l"><span>${esc(p.r)}</span><i style="width:${Math.round((p.v || 0) / max * 100)}%"></i><b>${p.v == null ? "—" : esc(num1(p.v))}${unid}</b></div>`).join("")}</div>`; };
+async function dadosConsulta() {
+  const s = sessao(); if (!s || s.papel !== "dono") throw new Error("A consulta é só para o dono.");
+  if (!prop()) throw new Error("Escolha a propriedade no Início.");
+  const r = await carregarResumo();
+  const dp = dadosProp(r);
+  if (!dp || !dp.consulta) throw new Error(dp && dp.antigo ? "A caixa postal ainda é a versão antiga. Peça ao Claude para atualizar a caixa postal (1.3)." : "A consulta aparece depois que o notebook sincronizar.");
+  return { r, c: dp.consulta };
+}
+TELAS.consulta = async () => {
+  const { r, c } = await dadosConsulta();
+  const aba = guarda.ler("consulta_aba", "resumo");
+  const ABAS = [["resumo", "Resumo"], ["rebanho", "Rebanho"], ["leite", "Leite"], ["dinheiro", "Dinheiro"], c.estoque ? ["estoque", "Estoque"] : ["gestao", "Acerto"]];
+  const p = PROPS[prop()];
+  let corpo = "";
+  if (aba === "resumo") {
+    const k = c.kpis || {};
+    corpo = `<div class="cartao">${linhaR("Animais", k.animais ?? "—")}${linhaR("Vacas em lactação", k.lactacao ?? "—")}${linhaR("Último leite", k.ultimo_dia ? k.ultimo_dia + " — " + num1(k.ultimo_litros) + " L" : "—")}${linhaR("Média 7 dias", k.media7 != null ? num1(k.media7) + " L/dia" : "—")}${linhaR("Receita do mês", real(k.receita_mes))}${linhaR("Custo operacional do mês", real(k.coe_mes))}</div>
+      <h2>Avisos</h2><div class="cartao">${(c.alertas || []).length ? c.alertas.map(a => `<div class="alerta"><span class="ponto p-${esc(a.nivel || "azul")}"></span><div><b>${esc(a.titulo)}${a.data ? " · " + esc(a.data) : ""}</b><small>${esc(a.detalhe || "")}</small></div></div>`).join("") : `<p class="sub">Nada para avisar.</p>`}</div>
+      ${c.indices ? `<h2>Índices reprodutivos</h2><div class="cartao">${linhaR("Intervalo entre partos", c.indices.iep_dias ? num1(c.indices.iep_dias, 0) + " dias" : "—")}${linhaR("Prenhez nos diagnósticos", c.indices.taxa_prenhez != null ? num1(c.indices.taxa_prenhez, 0) + "%" : "—")}${linhaR("Idade ao 1º parto", c.indices.idade_1parto_meses ? num1(c.indices.idade_1parto_meses) + " meses" : "—")}</div>` : ""}`;
+  } else if (aba === "rebanho") {
+    const f = guarda.ler("consulta_grupo", "todos"), b = guarda.ler("consulta_busca", "");
+    const cont = {}; (c.rebanho || []).forEach(a => cont[a.grupo] = (cont[a.grupo] || 0) + 1);
+    const sa = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const lista = (c.rebanho || []).filter(a => (f === "todos" || a.grupo === f) && (!b || sa(`${a.brinco} ${a.codigo} ${a.nome} ${a.mae || ""}`).includes(sa(b))));
+    corpo = `<input id="busca-c" placeholder="Brinco, nome ou mãe" value="${esc(b)}">
+      <div class="chips"><button data-g="todos" class="${f === "todos" ? "on" : ""}">Todos ${(c.rebanho || []).length}</button>${Object.entries(GRUPOS_C).filter(([g]) => cont[g]).map(([g, n]) => `<button data-g="${g}" class="${f === g ? "on" : ""}">${n} ${cont[g]}</button>`).join("")}</div>
+      <div class="cartao">${lista.length ? lista.map(a => `<button class="item-animal" data-ficha="${esc(a.brinco)}"><div><b>${esc(a.codigo)}${a.nome ? " " + esc(a.nome) : ""}</b><small>${esc([a.fisico ? "brinco " + a.fisico : "sem brinco", a.categoria, GRUPOS_C[a.grupo] && a.grupo !== "novilhas" && a.grupo !== "bezerras" && a.grupo !== "bezerros" ? GRUPOS_C[a.grupo] : "", a.del != null ? "DEL " + a.del : "", a.mae ? "mãe " + a.mae : ""].filter(Boolean).join(" · "))}</small>${a.proximo ? `<small class="${a.proximo.atrasado ? "atrasado" : ""}">${esc(a.proximo.data)} · ${esc(a.proximo.tipo)}</small>` : ""}${a.carencia_ate ? `<small class="atrasado">Leite em carência até ${esc(a.carencia_ate)}</small>` : ""}</div><span class="lado">${a.media7 != null ? esc(num1(a.media7)) + " L" : a.idade_meses != null ? a.idade_meses + " m" : ""} ›</span></button>`).join("") : `<p class="sub">Nenhum animal.</p>`}</div>`;
+  } else if (aba === "leite") {
+    const d = (c.leite && c.leite.diario) || [];
+    corpo = `<h2>Dia a dia (últimos ${d.length})</h2><div class="cartao">${d.length ? barras(d.slice().reverse().map(x => ({ r: brData(x.d).slice(0, 5), v: x.litros != null ? x.litros : x.kg })), "") + `<p class="nota">Litros medidos; quando só há a pesagem do leiteiro, mostra os kg.</p>` : `<p class="sub">Sem leite lançado.</p>`}</div>
+      <h2>Por mês</h2><div class="cartao">${tabC(((c.leite && c.leite.mensal) || []).slice().reverse().map(m => ({ ...m, litros: num1(m.litros, 0), media: num1(m.media), kg: m.kg ? num1(m.kg, 0) : "—" })), [["mes", "Mês"], ["litros", "Litros"], ["media", "Média/dia"], ["kg", "Kg leiteiro"]])}</div>
+      ${(c.leite && c.leite.marcos || []).length ? `<h2>Marcos de manejo</h2><div class="cartao">${c.leite.marcos.slice().reverse().map(m => linhaR(brData(m.d), m.txt)).join("")}</div>` : ""}`;
+  } else if (aba === "dinheiro") {
+    const fz = c.financeiro || {};
+    corpo = `<div class="cartao">${fz.rotulo ? `<p class="sub">${esc(fz.rotulo)}</p>` : ""}${linhaR("Receitas", real(fz.receita))}${linhaR("Custo operacional (COE)", real(fz.coe))}${linhaR("Investimentos", real(fz.inv))}${linhaR("Resultado", real(fz.resultado))}${fz.custo_litro != null ? linhaR("Custo por litro", real(fz.custo_litro)) : ""}${fz.margem_litro != null ? linhaR("Margem por litro", real(fz.margem_litro)) : ""}</div>
+      <h2>Por centro de custo</h2><div class="cartao">${(fz.por_centro || []).map(x => linhaR(x.nome || x.centro, "desp. " + real(x.desp) + (x.rec ? " · rec. " + real(x.rec) : ""))).join("") || `<p class="sub">Nada no período.</p>`}</div>
+      <h2>Contas em aberto</h2><div class="cartao">${(fz.contas || []).filter(x => x.situacao !== "paga").map(x => `<div class="alerta"><span class="ponto p-${x.dias != null && x.dias < 0 ? "vermelho" : x.dias != null && x.dias <= 7 ? "amarelo" : "azul"}"></span><div><b>${x.tipo === "receber" ? "A receber" : "A pagar"} ${esc(real(x.saldo))}</b><small>${esc(x.descricao || "")}${x.pessoa ? " · " + esc(x.pessoa) : ""} · vence ${esc(x.vencimento)}</small></div></div>`).join("") || `<p class="sub">Nenhuma.</p>`}</div>
+      ${(fz.fluxo || []).length ? `<h2>Fluxo de caixa</h2><div class="cartao">${tabC(fz.fluxo.slice().reverse().map(x => ({ mes: x.mes, e: real(x.entradas), s: real(x.saidas), a: real(x.acumulado) })), [["mes", "Mês"], ["e", "Entradas"], ["s", "Saídas"], ["a", "Acumulado"]])}</div>` : ""}`;
+  } else if (aba === "estoque") {
+    const e = c.estoque || {};
+    corpo = `<div class="cartao">${(e.itens || []).map(i => `<div class="alerta"><span class="ponto p-${i.situacao === "pedir agora" ? "vermelho" : i.situacao === "pedir em breve" ? "amarelo" : "azul"}"></span><div><b>${esc(i.insumo)}</b><small>${i.saldo != null ? esc(num1(i.saldo, 0)) + " kg" : "sem saldo"}${i.dias != null ? " · dá para " + esc(num1(i.dias, 0)) + " dias" : ""} · ${esc(i.situacao)}</small></div></div>`).join("") || `<p class="sub">Sem insumos.</p>`}</div>
+      ${e.pedido && e.pedido.itens && e.pedido.itens.length ? `<h2>Pedido sugerido</h2><div class="cartao">${e.pedido.itens.map(x => linhaR(x.insumo, (x.embalagens || x.qtd || "") + " " + (x.embalagem || "kg"))).join("")}${linhaR("Total", real(e.pedido.total))}</div>` : ""}`;
+  } else {
+    const g = c.gestao || {};
+    corpo = `<h2>Acerto com o Bob</h2><div class="cartao"><p>${esc((g.acerto && g.acerto.texto) || "—")}</p></div>
+      <h2>Partos recentes</h2><div class="cartao">${tabC((g.partos || []).slice().reverse(), [["data_br", "Data"], ["vaca", "Vaca"], ["detalhe", "Cria"]])}</div>
+      <h2>Movimentações</h2><div class="cartao">${tabC((g.movs || []).slice().reverse(), [["data_br", "Data"], ["codigo", "Animal"], ["tipo", "Tipo"], ["observacao", "Obs."]])}</div>`;
+  }
+  app.innerHTML = `${voltar()}<div class="faixa-prop" style="background:${p.cor}">Consulta: <b>${esc(p.titulo)}</b></div>
+    <p class="sub">Só leitura · dados de ${esc(r.gerado_em || "—")} (do notebook). Para lançar, use os botões do Início.</p>
+    <div class="chips abas">${ABAS.map(([k, n]) => `<button data-aba="${k}" class="${aba === k ? "on" : ""}">${n}</button>`).join("")}</div>${corpo}`;
+  ligarVoltar();
+  $$("[data-aba]").forEach(x => x.onclick = () => { guarda.gravar("consulta_aba", x.dataset.aba); TELAS.consulta(); });
+  $$("[data-g]").forEach(x => x.onclick = () => { guarda.gravar("consulta_grupo", x.dataset.g); TELAS.consulta(); });
+  $$("[data-ficha]").forEach(x => x.onclick = () => ir("ficha", { brinco: x.dataset.ficha }));
+  const bc = $("#busca-c"); if (bc) bc.onchange = () => { guarda.gravar("consulta_busca", bc.value.trim()); TELAS.consulta(); };
+};
+TELAS.ficha = async ({ brinco } = {}) => {
+  const { c } = await dadosConsulta();
+  brinco = brinco || guarda.ler("consulta_ficha", "");
+  guarda.gravar("consulta_ficha", brinco);
+  const f = (c.fichas || {})[brinco];
+  if (!f) throw new Error("Ficha não encontrada nesta propriedade.");
+  const a = f.cadastro || {};
+  const cad = [["Código", a.codigo], ["Brinco físico", a.brinco_fisico], ["Categoria", a.categoria], ["Sexo", a.sexo === "F" ? "Fêmea" : a.sexo === "M" ? "Macho" : a.sexo], ["Raça", [a.raca, a.grau_sangue].filter(Boolean).join(" ")], ["Pelagem", a.pelagem], ["Nascimento", a.nascimento ? a.nascimento + (a.nasc_estimado ? " (estimada)" : "") : ""], ["Idade estimada", a.idade_estimada], ["Mãe", a.mae], ["Pai", a.pai], ["Crias", a.crias], ["Registro", a.registro], ["Origem", a.origem], ["Entrada", a.data_entrada], ["Peso", a.peso_kg && a.peso_kg + " kg"], ["ECC", a.ecc]].filter(x => x[1]);
+  app.innerHTML = `<button class="voltar" id="voltar-c">‹ Consulta</button><h1>${esc(a.codigo)} ${esc(a.nome || "")}</h1>
+    <p class="sub">${esc([f.estado, ...(f.linhas || [])].filter(Boolean).join(" · "))}</p>
+    ${f.carne_ate ? `<div class="erro">Carência da carne até ${esc(f.carne_ate)}</div>` : ""}
+    ${(f.alertas || []).length ? `<h2>Próximos passos</h2><div class="cartao">${f.alertas.map(x => `<div class="alerta"><span class="ponto p-${x.atrasado ? "vermelho" : "azul"}"></span><div><b>${esc(x.tipo)} · ${esc(x.data)}</b><small>${esc(x.texto)}</small></div></div>`).join("")}</div>` : ""}
+    ${(f.leite30 || []).length ? `<h2>Leite (30 dias)</h2><div class="cartao">${barras(f.leite30.slice().reverse().map(x => ({ r: x.curta || x.data, v: x.litros })), " L")}</div>` : ""}
+    <h2>Cadastro</h2><div class="cartao">${cad.map(([k, v]) => linhaR(k, v)).join("")}${a.observacoes ? `<p class="sub">${esc(a.observacoes)}</p>` : ""}</div>
+    ${(f.lactacoes || []).length ? `<h2>Lactações</h2><div class="cartao">${tabC(f.lactacoes, [["n", "Nº"], ["inicio", "Início"], ["del", "DEL"], ["litros", "Litros"], ["media", "Média"]])}</div>` : ""}
+    <h2>Reprodução</h2><div class="cartao">${tabC((f.repro || []).slice().reverse(), [["data_br", "Data"], ["evento", "Evento"], ["detalhe", "Detalhe"], ["resultado", "Resultado"]])}</div>
+    <h2>Sanidade</h2><div class="cartao">${tabC((f.sanidade || []).slice().reverse(), [["data_br", "Data"], ["tipo", "Tipo"], ["produto", "Produto"], ["liberacao_leite_br", "Leite liberado"]])}</div>
+    ${(f.pesagens || []).length ? `<h2>Pesagens</h2><div class="cartao">${tabC(f.pesagens.slice().reverse(), [["data_br", "Data"], ["peso", "Kg"], ["metodo", "Método"]])}</div>` : ""}
+    ${f.memoria ? `<h2>Ficha (contexto)</h2><div class="cartao pre">${esc(f.memoria.replace(/^#.*\n/, "").trim())}</div>` : ""}`;
+  $("#voltar-c").onclick = () => ir("consulta");
+};
+
 function saudacao() { const h = new Date().getHours(); return h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite"; }
 
 /* ---------------------------------------------------------------- aparência (temas) */

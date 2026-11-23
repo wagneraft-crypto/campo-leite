@@ -108,3 +108,23 @@ input:focus, select:focus, textarea:focus { outline: 3px solid color-mix(in srgb
 .prop-sel button{flex:1;padding:12px;border:2px solid;border-radius:12px;background:transparent;color:inherit;font-weight:700;font-size:16px}
 .faixa-prop{color:#fff;border-radius:10px;padding:9px 12px;margin:8px 0 6px;font-size:15px}
 .faixa-prop .link{background:none;border:0;color:#fff;text-decoration:underline;margin-left:6px;font-size:14px}
+
+/* v1.3 — consulta do dono */
+.chips { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0; -webkit-overflow-scrolling: touch; }
+.chips button { flex: none; font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--borda); background: var(--cartao); color: var(--txt); }
+.chips button.on { background: var(--prim); color: var(--prim-txt); border-color: var(--prim); }
+.item-animal { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 10px; text-align: left; font: inherit; color: var(--txt);
+  background: none; border: 0; border-bottom: 1px solid var(--borda); padding: 10px 0; cursor: pointer; }
+.item-animal:last-child { border-bottom: 0; }
+.item-animal small { display: block; color: var(--txt2); font-size: 13.5px; }
+.item-animal small.atrasado { color: var(--verm); }
+.item-animal .lado { color: var(--txt2); white-space: nowrap; font-weight: 600; }
+.rolagem { overflow-x: auto; }
+.rolagem th { text-align: left; font-size: 13px; color: var(--txt2); font-weight: 600; padding: 4px 8px 4px 0; }
+.rolagem td { font-size: 14.5px; padding: 5px 8px 5px 0; vertical-align: top; }
+.barras { display: flex; flex-direction: column; gap: 4px; }
+.barra-l { display: grid; grid-template-columns: 46px 1fr 62px; align-items: center; gap: 8px; font-size: 13.5px; }
+.barra-l i { display: block; height: 12px; border-radius: 4px; background: var(--verde2); min-width: 2px; }
+.barra-l b { text-align: right; font-weight: 600; }
+.resumo-linha { gap: 12px; }
+.resumo-linha b { text-align: right; }
