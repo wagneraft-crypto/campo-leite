@@ -128,3 +128,10 @@ input:focus, select:focus, textarea:focus { outline: 3px solid color-mix(in srgb
 .barra-l b { text-align: right; font-weight: 600; }
 .resumo-linha { gap: 12px; }
 .resumo-linha b { text-align: right; }
+
+/* 1.4.0 — ração por vaca na ordenha e contatos */
+.vacas label input.conc{margin-top:6px}
+.contato{padding:10px 0;border-bottom:1px solid rgba(127,127,127,.25)}
+.contato:last-child{border-bottom:0}
+.contato small{display:block}
+.contato a{font-weight:600}
