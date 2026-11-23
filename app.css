@@ -135,3 +135,25 @@ input:focus, select:focus, textarea:focus { outline: 3px solid color-mix(in srgb
 .contato:last-child{border-bottom:0}
 .contato small{display:block}
 .contato a{font-weight:600}
+
+/* 1.5.0 — Leite do dia por lote/ordenha */
+.botoes-g { display: flex; flex-wrap: wrap; gap: 8px; }
+.botoes-g button { flex: 1 1 30%; min-height: 56px; font: inherit; font-weight: 600; font-size: 16px; border: 2px solid var(--borda); border-radius: 12px; background: var(--cartao); color: var(--txt); padding: 6px 8px; }
+.botoes-g button small { display: block; font-weight: 400; font-size: 12.5px; color: var(--txt2); }
+.botoes-g button.on { background: var(--prim); color: var(--prim-txt); border-color: var(--prim); }
+.botoes-g button.on small { color: var(--prim-txt); }
+.vaca-l { border-top: 1px solid var(--borda); padding: 10px 0; display: grid; gap: 6px; }
+.vaca-l.fora .vaca-t { opacity: .6; }
+.vaca-t small { color: var(--txt2); margin-left: 8px; font-size: 13px; }
+.vaca-n { display: flex; gap: 8px; }
+.vaca-n > div { flex: 1; }
+.vaca-n .rot-c { display: block; font-size: 12.5px; color: var(--txt2); margin-bottom: 2px; }
+.vaca-l select.falta { border-color: #b3261e; }
+.add-vaca { display: flex; gap: 8px; margin-top: 10px; }
+.add-vaca input { flex: 1; }
+.rodape-l { margin-top: 12px; font-size: 15px; line-height: 1.5; }
+.aviso-r { background: color-mix(in srgb, #e6b84d 22%, transparent); border: 1px solid #e6b84d; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
+.aviso-r small { display: block; margin-top: 6px; }
+label.chk { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+label.chk input { width: 22px; height: 22px; min-height: 0; }
+button.link { background: none; border: 0; color: inherit; text-decoration: underline; font: inherit; padding: 0; cursor: pointer; }

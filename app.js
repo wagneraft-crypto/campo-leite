@@ -1,7 +1,7 @@
 /* App de campo — WM e TR - Paquetá (mesma área, rebanhos separados). Telas estáticas; dados vão para a caixa postal no Google do Wagner.
    Sem sinal: guarda no celular (fila) e envia depois, sem duplicar (cada lançamento tem um código único). */
 "use strict";
-const VERSAO = "1.4.3";
+const VERSAO = "1.5.0";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -449,42 +449,190 @@ const checks = (nome, ops) => `<div class="opcoes">${ops.map(([v, n]) => `<label
 const optAnimais = (lista, rot = "Escolha o animal") => `<option value="">${rot}…</option>` + lista.map(a => `<option value="${esc(a.brinco)}">${esc(rotAnimal(a))}${a.categoria !== "vaca" ? " (" + esc(a.categoria) + ")" : ""}</option>`).join("");
 function dataOk(d) { exigir(/^\d{4}-\d{2}-\d{2}$/.test(d), "Informe a data."); exigir(d <= hoje(), "A data não pode ser no futuro."); return d; }
 
-/* ---------------------------------------------------------------- leite */
+/* ---------------------------------------------------------------- leite (v2: lote, ordenha, modos A/B/C, situação por vaca) */
+/* Dados do notebook (vão pelo canal "lotes" do resumo): lotes que ordenham, vacas em lactação de cada lote, médias,
+   lançamentos recentes (para avisar duplicado), motivos e limites. Sem isso, funciona no modo total com brinco digitado. */
+const MOTIVOS_PADRAO = { mastite: "mastite (clínica)", carencia: "em tratamento / carência de medicamento", colostro: "recém-parida — colostro", leite_alterado: "leite com sangue / alteração no leite", doente: "doente / mancando / sem condições", secagem: "em secagem / seca nesta data", agitada: "agitada / não deixou ordenhar", equipamento: "falha na ordenhadeira / falta de energia", saiu: "vaca saiu do lote (vendida, morta, transferida)", outro: "outro" };
+function infoOrdenha(r) {
+  const p = prop(), o = r && r.lotes && r.lotes.ordenha && r.lotes.ordenha[p];
+  if (o && (o.lotes_leite || []).length) return o;
+  const n = Math.max(1, Number(r && r.ordenhas_por_dia) || 1);
+  const vs = lactantes(r).map(a => ({ brinco: a.brinco, codigo: a.codigo || a.brinco, nome: a.nome || "", media: {} }));
+  const ords = {}; for (let i = 1; i <= n; i++) ords[String(i)] = n === 1 ? "Ordenha do dia" : ["Manhã", "Tarde", "3ª ordenha"][i - 1]; if (n > 1) ords.D = "Dia inteiro";
+  return { lotes_leite: [{ id: "", nome: "Todas as vacas", ordenhas_por_dia: n, horarios: [], ordenhas: ords, vacas: vs, media_total: {} }], ordenhas_recentes: [], motivos: MOTIVOS_PADRAO, motivos_aviso: ["secagem", "saiu", "colostro"], limites: { litros_vaca_ordenha: 25, variacao_pct: 30, dif_tanque_pct: 5 }, racao: p === "WM", sem_lista: !vs.length };
+}
+const SIT = { ordenhada: "Ordenhada", nao_ordenhada: "Não ordenhada", descartado: "Ordenhada – leite descartado" };
+const PER = { ambas: "Nas duas", manha: "Só de manhã", tarde: "Só à tarde", nao: "Não ordenhada" };
+const num1v = v => (Math.round(v * 10) / 10).toLocaleString("pt-BR");
 TELAS.leite = async () => {
+  if (!prop()) return escolherProp(() => mostrar("leite"));
   const r = await carregarResumo();
-  const vacas = lactantes(r);
-  const duas = (r.ordenhas_por_dia || 1) > 1;
-  const comConc = prop() === "WM";
-  formulario("Leite do dia", `${campoData("Data da ordenha")}
-    ${duas ? `<label>Qual ordenha</label>${radios("ordenha", [["1", "Manhã"], ["2", "Tarde"]], new Date().getHours() < 12 ? "1" : "2")}` : ""}
-    <label>Litros por vaca${comConc ? " e ração (kg) dada na ordenha" : ""}</label>
-    ${vacas.length ? `<div class="vacas">${vacas.map(a => `<label><span><b>${esc(a.codigo || a.brinco)}</b> ${esc(a.nome || "")}</span><input name="v_${esc(a.brinco)}" inputmode="decimal" placeholder="litros">${comConc ? `<input name="c_${esc(a.brinco)}" inputmode="decimal" placeholder="ração kg" class="conc">` : ""}</label>`).join("")}</div><p class="nota">Deixe em branco a vaca que não ordenhou.${comConc ? " Ração: só se pesou o concentrado de cada vaca (opcional)." : ""}</p>`
-      : `<p class="nota">A lista de vacas aparece depois que o notebook sincronizar. Por enquanto, lance o total do tanque.</p>`}
-    <label>Total do tanque (litros)</label><input name="total" inputmode="decimal" placeholder="se mediu">
-    <label>Observação</label><input name="obs" placeholder="vaca que não ordenhou, leite separado…">`,
-    f => {
-      const d = { data: dataOk(val(f, "data")), ordenha: duas ? marcado(f, "ordenha") || "1" : "1", vacas: {}, concentrado: {}, total: "", obs: val(f, "obs") };
-      d.ordenha_nome = duas ? (d.ordenha === "1" ? "manhã" : "tarde") : "ordenha do dia";
-      for (const a of vacas) {
-        const v = val(f, "v_" + a.brinco), c = comConc ? val(f, "c_" + a.brinco) : "";
-        if (c) { const k = numero(c); exigir(k != null && k >= 0 && k <= 30, `Ração da ${a.brinco} não parece certa: "${c}" (0 a 30 kg).`); exigir(v, `Informe os litros da ${a.brinco} (a ração vai junto com o leite).`); d.concentrado[a.brinco] = virgula(k); }
-        if (v) { const n = numero(v); exigir(n != null && n >= 0 && n <= 80, `Litros da ${a.brinco} não parecem certos: "${v}".`); d.vacas[a.brinco] = virgula(n); }
+  const info = infoOrdenha(r);
+  const L = info.lotes_leite;
+  const chaveR = `rasc_leite_${prop()}`;
+  let st = guarda.ler(chaveR, null);
+  const rasc = !!st;
+  if (!st) {
+    const lote = L[0].id, n = L[0].ordenhas_por_dia;
+    st = { data: hoje(), lote, ordenha: n > 1 ? (new Date().getHours() < 12 ? "1" : "2") : "1", modo: guarda.ler("modo_lote_" + prop() + "_" + lote, "B"), medir: false, vacas: {}, extras: [], total: "", tanque_medido: "", bezerras: "", concentrado_total: "", obs: "", acao: "novo" };
+  }
+  const salvar = () => guarda.gravar(chaveR, st);
+  const lt = () => L.find(x => x.id === st.lote) || L[0];
+  const lista = () => [...lt().vacas, ...st.extras.map(b => ({ brinco: b, codigo: b, nome: "(digitada)", media: {} }))];
+  const vst = b => st.vacas[b] || (st.vacas[b] = { situacao: "ordenhada", litros: "", racao: "", motivo: "", motivo_txt: "", periodo: "ambas" });
+  const desenhar = () => {
+    const l = lt(), n = l.ordenhas_por_dia, ehD = st.ordenha === "D";
+    if (ehD) st.modo = "C"; else if (st.modo === "C") st.modo = "B";
+    const modo = st.modo, vs = lista();
+    const k = `${st.data}|${l.id}|${st.ordenha}`;
+    const ja = (info.ordenhas_recentes || []).find(x => `${x.data}|${x.lote}|${x.ordenha}` === k) ||
+      fila().filter(f => f.tipo === "leite" && f.dados.versao === 2 && f.dados.propriedade === prop()).map(f => f.dados).find(d => `${d.data}|${d.lote}|${d.ordenha}` === k);
+    const conflitoD = n > 1 && (info.ordenhas_recentes || []).some(x => x.data === st.data && x.lote === l.id && (ehD ? x.ordenha !== "D" : x.ordenha === "D"));
+    const linhaVaca = a => {
+      const v = vst(a.brinco), b = esc(a.brinco), med = a.media || {};
+      const ref = med[st.ordenha] ?? null;
+      const sit = modo === "C" ? `<select data-k="periodo" data-b="${b}">${Object.entries(PER).map(([x, t]) => `<option value="${x}" ${(v.situacao === "nao_ordenhada" ? "nao" : v.periodo) === x ? "selected" : ""}>${t}</option>`).join("")}</select>`
+        : `<select data-k="situacao" data-b="${b}">${Object.entries(SIT).map(([x, t]) => `<option value="${x}" ${v.situacao === x ? "selected" : ""}>${t}</option>`).join("")}</select>`;
+      const precisaMot = v.situacao !== "ordenhada";
+      const litrosOn = modo === "A" || st.medir;
+      return `<div class="vaca-l ${v.situacao === "nao_ordenhada" ? "fora" : ""}">
+        <div class="vaca-t"><b>${esc(a.codigo || a.brinco)}</b> ${esc(a.nome || "")}${ref != null ? `<small>média ${num1v(ref)} L nesta ordenha</small>` : ""}</div>
+        ${sit}
+        <div class="vaca-n">${litrosOn && v.situacao !== "nao_ordenhada" ? `<div><span class="rot-c">Litros</span><input data-k="litros" data-b="${b}" inputmode="decimal" placeholder="${modo === "A" ? "litros" : "se mediu"}" value="${esc(v.litros)}"></div>` : ""}
+        ${info.racao && v.situacao !== "nao_ordenhada" ? `<div><span class="rot-c">Ração (kg)</span><input data-k="racao" data-b="${b}" inputmode="decimal" placeholder="opcional" value="${esc(v.racao)}"></div>` : ""}</div>
+        ${precisaMot ? `<select data-k="motivo" data-b="${b}" class="${v.motivo ? "" : "falta"}"><option value="">Motivo… (obrigatório)</option>${Object.entries(info.motivos || MOTIVOS_PADRAO).map(([x, t]) => `<option value="${x}" ${v.motivo === x ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>${v.motivo === "outro" ? `<input data-k="motivo_txt" data-b="${b}" placeholder="descreva o motivo" value="${esc(v.motivo_txt)}">` : ""}` : ""}
+      </div>`;
+    };
+    app.innerHTML = `${voltar()}${faixaProp()}<h1>Leite do dia</h1>
+      ${rasc ? `<div class="aviso-r">Rascunho recuperado. <button class="link" id="desc-rasc">Descartar e começar de novo</button></div>` : ""}
+      <p class="sub">${info.sem_lista || !lt().vacas.length ? "Lista de vacas ainda não veio do notebook: use o total e, se quiser, digite os brincos." : `Lista de vacas atualizada em ${esc(r.gerado_em || "—")}.`}</p>
+      <div class="cartao">
+        ${L.length > 1 ? `<label>Lote</label><div class="botoes-g">${L.map(x => `<button type="button" data-lote="${esc(x.id)}" class="${x.id === l.id ? "on" : ""}">${esc(x.nome)}<small>${x.vacas.length} vaca(s)</small></button>`).join("")}</div>` : `<p class="sub">Lote: <b>${esc(l.nome)}</b></p>`}
+        <label>Data da ordenha</label><input type="date" id="f-data" value="${esc(st.data)}" max="${hoje()}">
+        ${n > 1 ? `<label>Ordenha</label><div class="botoes-g">${Object.entries(l.ordenhas).map(([c, t]) => `<button type="button" data-ord="${c}" class="${st.ordenha === c ? "on" : ""}">${esc(t)}${l.horarios && l.horarios[Number(c) - 1] ? `<small>~${esc(l.horarios[Number(c) - 1])}</small>` : ""}</button>`).join("")}</div>` : ""}
+        ${ja || conflitoD ? `<div class="aviso-r">${conflitoD ? (ehD ? "Já há ordenha separada (manhã/tarde) neste dia: lance ou corrija as ordenhas, não o dia inteiro." : "Este dia já foi lançado como 'Dia inteiro': corrija aquele lançamento.") : `<b>Já existe</b> lançamento desta ordenha${ja.total ? ` (total ${esc(String(ja.total).replace(".", ","))} L)` : ""}. O que fazer?
+          <div class="linha-botoes"><button type="button" class="btn peq ${st.acao === "corrigir" ? "prim" : ""}" data-acao="corrigir">Abrir e corrigir</button><button type="button" class="btn peq ${st.acao === "complementar" ? "prim" : ""}" data-acao="complementar">Complementar</button></div>
+          <small>${st.acao === "corrigir" ? "Corrigir: o que você enviar SUBSTITUI o lançamento anterior." : st.acao === "complementar" ? "Complementar: acrescenta vacas que faltam ou a medida de vaca ainda não medida." : "Escolha uma opção para continuar."}</small>`}</div>` : ""}
+        ${!ehD ? `<label>Como vai lançar</label><div class="botoes-g">${[["A", "Por vaca"], ["B", "Total da ordenha"]].map(([m, t]) => `<button type="button" data-modo="${m}" class="${modo === m ? "on" : ""}">${t}</button>`).join("")}</div>` : `<p class="sub">Dia inteiro: lance o <b>total do dia</b> e marque quando cada vaca foi ordenhada.</p>`}
+      </div>
+      ${modo !== "A" ? `<div class="cartao"><label>${modo === "C" ? "Total do dia (litros)" : "Total da ordenha (litros)"}</label><input id="f-total" inputmode="decimal" placeholder="litros" value="${esc(st.total)}">
+        ${modo === "B" ? `<label class="chk"><input type="checkbox" id="f-medir" ${st.medir ? "checked" : ""}> Informar litros de algumas vacas</label>` : ""}</div>` : ""}
+      <div class="cartao"><b>${modo === "A" ? "Vacas — litros de cada uma" : "Vacas desta ordenha"}</b>${modo !== "A" ? `<p class="nota">Todas vêm marcadas como ordenhadas: mude só quem não foi ordenhada (com o motivo).</p>` : ""}
+        ${vs.map(linhaVaca).join("") || `<p class="sub">Nenhuma vaca na lista.</p>`}
+        <div class="add-vaca"><input id="f-brinco" inputmode="numeric" placeholder="brinco de outra vaca"><button type="button" class="btn peq" id="add-b">+ Vaca</button></div></div>
+      <div class="cartao">
+        ${modo === "A" ? `<label>Total medido no tanque (opcional)</label><input id="f-tanque" inputmode="decimal" placeholder="para conferir com a soma" value="${esc(st.tanque_medido)}">` : ""}
+        <label>Leite para bezerras (litros)</label><input id="f-bez" inputmode="decimal" placeholder="0" value="${esc(st.bezerras)}">
+        ${info.racao && modo !== "A" ? `<label>Concentrado total nesta ordenha (kg)</label><input id="f-conc" inputmode="decimal" placeholder="se não informou por vaca" value="${esc(st.concentrado_total)}">` : ""}
+        <label>Observação</label><input id="f-obs" placeholder="opcional" value="${esc(st.obs)}">
+        <div class="rodape-l" id="rodape-l"></div>
+      </div>
+      <button class="btn prim larga" id="revisar">Revisar</button><div id="msg"></div>`;
+    ligarVoltar();
+    const tp = $("#trocar-prop"); if (tp) tp.onclick = () => escolherProp(() => mostrar("leite"));
+    const dr = $("#desc-rasc"); if (dr) dr.onclick = () => { guarda.tirar(chaveR); mostrar("leite"); };
+    $$("[data-lote]").forEach(x => x.onclick = () => { st.lote = x.dataset.lote; st.vacas = {}; st.extras = []; st.acao = "novo"; const nn = lt().ordenhas_por_dia; if (nn === 1) st.ordenha = "1"; st.modo = guarda.ler("modo_lote_" + prop() + "_" + st.lote, st.modo); salvar(); desenhar(); });
+    $$("[data-ord]").forEach(x => x.onclick = () => { st.ordenha = x.dataset.ord; st.acao = "novo"; salvar(); desenhar(); });
+    $$("[data-modo]").forEach(x => x.onclick = () => { st.modo = x.dataset.modo; guarda.gravar("modo_lote_" + prop() + "_" + st.lote, st.modo); salvar(); desenhar(); });
+    $$("[data-acao]").forEach(x => x.onclick = () => { st.acao = x.dataset.acao; if (st.acao === "corrigir" && ja && ja.total && !st.total) st.total = String(ja.total).replace(".", ","); salvar(); desenhar(); });
+    $("#f-data").onchange = e => { st.data = e.target.value; st.acao = "novo"; salvar(); desenhar(); };
+    const m = $("#f-medir"); if (m) m.onchange = () => { st.medir = m.checked; salvar(); desenhar(); };
+    $$("[data-b]").forEach(x => {
+      const ev = x.tagName === "SELECT" ? "change" : "input";
+      x.addEventListener(ev, () => {
+        const v = vst(x.dataset.b);
+        if (x.dataset.k === "periodo") { if (x.value === "nao") v.situacao = "nao_ordenhada"; else { v.situacao = "ordenhada"; v.periodo = x.value; } }
+        else v[x.dataset.k] = x.value;
+        salvar();
+        if (x.tagName === "SELECT") desenhar(); else calcular();
+      });
+    });
+    [["f-total", "total"], ["f-tanque", "tanque_medido"], ["f-bez", "bezerras"], ["f-conc", "concentrado_total"], ["f-obs", "obs"]].forEach(([id, k]) => { const e = $("#" + id); if (e) e.oninput = () => { st[k] = e.value; salvar(); calcular(); }; });
+    $("#add-b").onclick = () => { const b = $("#f-brinco").value.replace(/\D/g, ""); if (!b) return; if (!lista().some(a => a.brinco === b)) st.extras.push(b); salvar(); desenhar(); };
+    $("#revisar").onclick = revisar;
+    calcular();
+  };
+  const somas = () => {
+    let med = 0, desc = 0, nMed = 0, ord = 0, nao = 0, racao = 0;
+    for (const a of lista()) {
+      const v = vst(a.brinco);
+      if (v.situacao === "nao_ordenhada") { nao++; continue; }
+      ord++;
+      const l = numero(v.litros);
+      if ((st.modo === "A" || st.medir) && l != null && v.litros !== "") { med += l; nMed++; if (v.situacao === "descartado") desc += l; }
+      const rc = numero(v.racao); if (rc != null && v.racao !== "") racao += rc;
+    }
+    return { med, desc, nMed, ord, nao, racao };
+  };
+  const calcular = () => {
+    const s = somas(), tot = st.modo === "A" ? s.med : numero(st.total);
+    const bez = numero(st.bezerras) || 0, tanque = tot != null ? tot - s.desc - bez : null;
+    const ro = $("#rodape-l"); if (!ro) return;
+    ro.innerHTML = `${st.modo === "A" ? `Total (soma das vacas): <b>${num1v(s.med)} L</b>` : `Medidas: ${num1v(s.med)} L em ${s.nMed} vaca(s)${tot != null ? ` · <b>Não individualizado: ${num1v(tot - s.med)} L</b>` : ""}`}
+      <br>Ordenhadas: ${s.ord} de ${s.ord + s.nao}${s.desc ? ` · descartado ${num1v(s.desc)} L` : ""}${tanque != null ? ` · <b>para o tanque: ${num1v(tanque)} L</b>` : ""}
+      ${tot != null && tot + 0.001 < s.med ? `<div class="erro">O total não pode ser menor que a soma das vacas medidas (${num1v(s.med)} L).</div>` : ""}`;
+  };
+  const revisar = () => {
+    $("#msg").innerHTML = "";
+    const l = lt(), n = l.ordenhas_por_dia, s = somas(), lim = info.limites || {};
+    try {
+      dataOk(st.data);
+      if (st.acao === "novo" && ((info.ordenhas_recentes || []).some(x => `${x.data}|${x.lote}|${x.ordenha}` === `${st.data}|${l.id}|${st.ordenha}`)))
+        throw new Error("Esta ordenha já foi lançada: escolha 'Abrir e corrigir' ou 'Complementar'.");
+      const vs = [], avisos = [];
+      for (const a of lista()) {
+        const v = vst(a.brinco), cod = a.codigo || a.brinco;
+        if (v.situacao !== "ordenhada") { exigir(v.motivo, `${cod}: escolha o MOTIVO.`); if (v.motivo === "outro") exigir((v.motivo_txt || "").trim(), `${cod}: descreva o motivo.`); }
+        const lit = (st.modo === "A" || st.medir) && v.situacao !== "nao_ordenhada" && v.litros !== "" ? numero(v.litros) : null;
+        if (st.modo === "A" && v.situacao !== "nao_ordenhada") exigir(lit != null, `${cod}: informe os litros (ou marque como não ordenhada).`);
+        if (lit != null) {
+          exigir(lit >= 0 && lit <= 80, `${cod}: litros não parecem certos (${v.litros}).`);
+          if (lit > (lim.litros_vaca_ordenha || 25)) avisos.push(`${cod}: ${num1v(lit)} L numa ordenha (acima de ${lim.litros_vaca_ordenha || 25} L).`);
+          if (lit === 0 && v.situacao === "ordenhada") avisos.push(`${cod}: 0 L, mas marcada como ordenhada.`);
+          const ref = (a.media || {})[st.ordenha];
+          if (ref && Math.abs(lit - ref) / ref * 100 > (lim.variacao_pct || 30)) avisos.push(`${cod}: ${num1v(lit)} L, média de ${num1v(ref)} L nos últimos 7 dias (${Math.round((lit - ref) / ref * 100)}%).`);
+        }
+        const rc = v.racao !== "" && v.situacao !== "nao_ordenhada" ? numero(v.racao) : null;
+        if (rc != null) exigir(rc >= 0 && rc <= 30, `${cod}: ração não parece certa (${v.racao}).`);
+        vs.push({ brinco: a.brinco, situacao: v.situacao, litros: lit != null ? virgula(lit) : "", racao_kg: rc != null ? virgula(rc) : "", motivo: v.situacao !== "ordenhada" ? v.motivo : "", motivo_txt: v.motivo === "outro" ? v.motivo_txt : "", periodo: st.modo === "C" ? v.periodo : "" });
       }
-      if (!Object.keys(d.concentrado).length) delete d.concentrado;
-      const t = val(f, "total"); if (t) { const n = numero(t); exigir(n != null && n > 0 && n <= 5000, "Total do tanque inválido."); d.total = virgula(n); }
-      exigir(Object.keys(d.vacas).length || d.total, "Informe os litros de pelo menos uma vaca ou o total do tanque.");
-      return d;
-    },
-    d => { const vs = Object.entries(d.vacas); const soma = vs.reduce((s, [, v]) => s + numero(v), 0);
-      const cc = d.concentrado || {};
-      return `Data: ${brData(d.data)} (${d.ordenha_nome})\n` + vs.map(([b, v]) => `Vaca ${b}: ${v} L${cc[b] ? " · ração " + cc[b] + " kg" : ""}`).join("\n") + (vs.length ? `\nSoma: ${virgula(Math.round(soma * 10) / 10)} L` : "") + (d.total ? `\nTanque: ${d.total} L` : "") + (d.obs ? `\nObs.: ${d.obs}` : ""); },
-    "leite");
+      let total = st.modo === "A" ? s.med : numero(st.total);
+      if (st.modo !== "A") { exigir(total != null && total > 0 && total <= 5000, "Informe o total em litros."); exigir(total + 0.001 >= s.med, `O total (${num1v(total)} L) não pode ser menor que a soma das vacas medidas (${num1v(s.med)} L).`); }
+      else exigir(vs.length && s.med > 0, "Informe os litros das vacas.");
+      const bez = st.bezerras ? numero(st.bezerras) : 0; exigir(bez != null && bez >= 0 && bez + s.desc <= total + 0.001, "Leite das bezerras não parece certo.");
+      const tm = st.tanque_medido ? numero(st.tanque_medido) : null; const tanque = total - s.desc - bez;
+      if (tm != null && tanque > 0 && Math.abs(tm - tanque) / tanque * 100 > (lim.dif_tanque_pct || 5)) avisos.push(`Tanque medido ${num1v(tm)} L × calculado ${num1v(tanque)} L (diferença de ${Math.round(Math.abs(tm - tanque) / tanque * 100)}%).`);
+      const refT = (l.media_total || {})[st.ordenha];
+      if (refT && Math.abs(total - refT) / refT * 100 > (lim.variacao_pct || 30)) avisos.push(`Total ${num1v(total)} L × média do lote de ${num1v(refT)} L nesta ordenha (${Math.round((total - refT) / refT * 100)}%).`);
+      if (avisos.length && !confirm("Confira antes de seguir:\n\n" + avisos.join("\n") + "\n\nEstá certo assim?")) return;
+      const ct = st.concentrado_total ? numero(st.concentrado_total) : null; if (ct != null) exigir(ct >= 0 && ct <= 2000, "Concentrado total inválido.");
+      const dados = { versao: 2, data: st.data, lote: l.id, lote_nome: l.nome, ordenha: st.ordenha, ordenha_nome: l.ordenhas[st.ordenha] || "", modo: st.modo === "B" && st.medir && s.nMed ? "M" : st.modo, acao: st.acao, vacas: vs, total: st.modo === "A" ? "" : virgula(total), tanque_medido: tm != null ? virgula(tm) : "", bezerras: bez ? virgula(bez) : "", concentrado_total: ct != null ? virgula(ct) : "", obs: st.obs, enviado_em: new Date().toISOString() };
+      const codDe = b => (lista().find(a => a.brinco === b) || {}).codigo || b;
+      const nao = vs.filter(v => v.situacao === "nao_ordenhada"), desc = vs.filter(v => v.situacao === "descartado");
+      const nomeMot = v => v.motivo === "outro" ? v.motivo_txt : (info.motivos || MOTIVOS_PADRAO)[v.motivo];
+      const txt = `${PROPS[prop()].nome} – ${l.nome} – ${brData(st.data)} – ${(l.ordenhas[st.ordenha] || "").toUpperCase()} – ${{ A: "por vaca", B: "total da ordenha", M: `total + ${s.nMed} vaca(s) medida(s)`, C: "total do dia" }[dados.modo]}${st.acao !== "novo" ? ` (${st.acao.toUpperCase()})` : ""}
+Total: ${num1v(total)} L | Tanque: ${num1v(tanque)} L | Descartado: ${num1v(s.desc)} L${desc.length ? " (" + desc.map(v => `${codDe(v.brinco)} – ${nomeMot(v)}`).join("; ") + ")" : ""}${bez ? ` | Bezerras: ${num1v(bez)} L` : ""}
+Ordenhadas: ${s.ord} de ${s.ord + s.nao}${nao.length ? " | Não ordenhada: " + nao.map(v => `${codDe(v.brinco)} – ${nomeMot(v)}`).join("; ") : ""}${(ct || s.racao) ? `\nConcentrado: ${num1v(ct || s.racao)} kg` : ""}${st.modo === "A" ? "\n" + vs.filter(v => v.litros).map(v => `  ${codDe(v.brinco)}: ${v.litros} L${v.racao_kg ? " · ração " + v.racao_kg + " kg" : ""}`).join("\n") : ""}${st.obs ? "\nObs.: " + st.obs : ""}`;
+      app.innerHTML = `${faixaProp()}<h1>Confira</h1><div class="cartao pre">${esc(txt)}</div>
+        <div class="linha-botoes"><button class="btn" id="corrigir">Corrigir</button><button class="btn prim" id="confirmar">Enviar</button></div>`;
+      $("#corrigir").onclick = () => desenhar();
+      $("#confirmar").onclick = () => {
+        try { enfileirar("leite", dados); } catch (er) { aviso(er.message, 6000); return; }
+        guarda.tirar(chaveR);
+        app.innerHTML = `<div class="ok"><b>${navigator.onLine ? "Enviando…" : "Guardado no celular."}</b><p>${navigator.onLine ? "O notebook lança quando sincronizar." : "Vai sozinho quando tiver sinal. Pode continuar lançando."}</p></div>
+          <div class="linha-botoes"><button class="btn" id="outro">Lançar outra ordenha</button><button class="btn prim" id="inicio">Início</button></div>`;
+        $("#outro").onclick = () => mostrar("leite"); $("#inicio").onclick = () => ir("inicio");
+      };
+    } catch (er) { $("#msg").innerHTML = `<div class="erro">${esc(er.message)}</div>`; }
+  };
+  desenhar();
 };
 
 /* ---------------------------------------------------------------- trato */
 TELAS.trato = async () => {
   const r = await carregarResumo();
-  const lotes = (r.lotes && r.lotes.length ? r.lotes : ["Vacas em lactação", "Vacas secas", "Bezerras", "Novilhas"]);
+  const lp = r.lotes && !Array.isArray(r.lotes) ? ((r.lotes.trato_prop || {})[prop()] || r.lotes.trato) : r.lotes;
+  const lotes = (lp && lp.length ? lp : ["Vacas em lactação", "Vacas secas", "Bezerras", "Novilhas"]);
   const produtos = r.produtos_trato && r.produtos_trato.length ? r.produtos_trato : ["palma forrageira", "bagaço de cana", "ração (mistura)"];
   formulario("Trato", `<label>Data e hora</label><input type="datetime-local" name="quando" value="${agoraLocal()}" max="${agoraLocal()}" required>
     <label>Lote</label>${radios("lote", lotes.map(l => [l, l]), lotes[0])}
