@@ -1,7 +1,7 @@
 /* App de campo — WM e TR - Paquetá (mesma área, rebanhos separados). Telas estáticas; dados vão para a caixa postal no Google do Wagner.
    Sem sinal: guarda no celular (fila) e envia depois, sem duplicar (cada lançamento tem um código único). */
 "use strict";
-const VERSAO = "1.5.0";
+const VERSAO = "1.6.0";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -66,6 +66,9 @@ async function api(acao, corpo = {}) {
 
 /* ---------------------------------------------------------------- sessão */
 const sessao = () => guarda.ler("sessao", null);
+/* v1.6: o dono pode ver o app exatamente como o funcionário vê (só neste celular; nada muda na fazenda) */
+const visaoFunc = () => !!guarda.ler("visao_func", false);
+const ehDono = () => { const s = sessao(); return !!s && s.papel === "dono" && !visaoFunc(); };
 function sair(perguntar = true) {
   if (perguntar && fila().length && !confirm(`Ainda há ${fila().length} lançamento(s) esperando sinal neste celular. Se sair, eles continuam guardados e vão quando você entrar de novo. Sair?`)) return;
   guarda.tirar("sessao"); guarda.tirar("resumo");
@@ -93,8 +96,11 @@ async function enviarFila() {
     const lote = f.slice(0, 20);
     const r = await api("enviar", { token: s.token, itens: lote });
     const certos = new Set(r.resultados.filter(x => x.ok).map(x => x.id));
-    const ruins = r.resultados.filter(x => !x.ok);
+    /* "tipo inválido" = caixa postal ainda antiga: o lançamento NÃO se perde, fica guardado até ela ser atualizada */
+    const antigos = r.resultados.filter(x => !x.ok && x.erro === "tipo inválido");
+    const ruins = r.resultados.filter(x => !x.ok && x.erro !== "tipo inválido");
     guarda.gravar("fila", fila().filter(x => !certos.has(x.id) && !ruins.some(y => y.id === x.id)));
+    if (antigos.length) { aviso(`${antigos.length} lançamento(s) de dinheiro guardado(s) no celular: a caixa postal precisa ser atualizada (peça ao Claude).`, 7000); enviando = false; atualizarEstado(); return; }
     if (ruins.length) aviso(`${ruins.length} lançamento(s) recusado(s) pela caixa postal: ${ruins.map(x => x.erro).join(", ")}`, 6000);
     else aviso(`Enviado${certos.size > 1 ? "s" : ""} ✔ (${certos.size})`);
     if ((location.hash.slice(1) || "inicio") === "inicio") mostrar("inicio");
@@ -107,7 +113,7 @@ function atualizarEstado() {
   const n = fila().length, el = $("#estado-rede");
   el.innerHTML = !navigator.onLine ? `<span class="off">sem sinal</span>${n ? ` <span class="pend">${n} guardado${n > 1 ? "s" : ""}</span>` : ""}`
     : n ? `<span class="pend">${enviando ? "enviando…" : n + " a enviar"}</span>` : "";
-  const s = sessao(); $("#quem").textContent = s ? `${s.nome}${s.papel === "dono" ? " · dono" : ""}` : "Fazenda WM";
+  const s = sessao(); $("#quem").textContent = s ? `${s.nome}${s.papel === "dono" ? (visaoFunc() ? " · visão do funcionário" : " · dono") : ""}` : "Fazenda WM";
 }
 addEventListener("online", enviarFila);
 addEventListener("offline", atualizarEstado);
@@ -135,7 +141,7 @@ async function carregarResumo(forcar = false) {
 /* propriedade: WM (confinado) ou TR (TR - Paquetá, a pasto). Escolhida no Início. */
 const PROPS = { WM: { nome: "WM", titulo: "WM (confinado)", cor: "#1f6f43" }, TR: { nome: "TR - Paquetá", titulo: "TR - Paquetá (a pasto)", cor: "#9a4f12" } };
 const prop = () => { const p = guarda.ler("prop", ""); return PROPS[p] ? p : ""; };
-const TIPOS_COM_PROP = ["leite", "trato", "ocorrencia"];
+const TIPOS_COM_PROP = ["leite", "trato", "ocorrencia", "financeiro"];
 const animais = r => { const p = prop(); if (!r || !p) return []; const pp = r.propriedades && r.propriedades[p]; return pp ? (pp.animais || []) : (p === "WM" ? (r.animais || []) : []); };
 /* Números da propriedade escolhida. Sem "propriedades" (caixa postal antiga), só a WM tem números — nunca mostrar
    os da WM quando a escolhida é a TR. */
@@ -224,14 +230,17 @@ function mascaraCpf(inp) {
 TELAS.inicio = async () => {
   const s = sessao();
   const r = await carregarResumo();
-  const dono = s.papel === "dono";
+  const dono = ehDono(), previa = s.papel === "dono" && visaoFunc();
   const feitas = new Set(guarda.ler("tarefas_feitas", []));
-  const tarefas = (r.tarefas || []).filter(t => t.situacao !== "feita");
+  const semAc = x => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  /* na visão do funcionário, só as tarefas "para todos" (as de cada funcionário ficam com ele) */
+  const tarefas = (r.tarefas || []).filter(t => t.situacao !== "feita" && (!previa || ["todos", semAc(s.nome)].includes(semAc(t.para))));
   const dp = dadosProp(r) || { producao: [], alertas: [] };
-  const alertas = dp.alertas || [];
+  const alertas = (previa ? dp.alertas_campo : null) || dp.alertas || [];
   const prod = (dp.producao || []).slice(-5).reverse();
   const nomeP = prop() ? PROPS[prop()].nome : "";
   app.innerHTML = `
+    ${previa ? `<div class="faixa-previa">👁 Você está vendo o app <b>como o funcionário vê</b>. Os lançamentos feitos aqui são de verdade. <button type="button" class="link" id="sair-previa">Voltar à visão do dono</button></div>` : ""}
     <h1>${saudacao()}, ${esc(s.nome.split(" ")[0])}</h1>
     <div class="prop-sel">${Object.entries(PROPS).map(([k, p]) => `<button data-prop="${k}" class="${prop() === k ? "on" : ""}" style="${prop() === k ? `background:${p.cor};border-color:${p.cor};color:#fff` : `border-color:${p.cor}`}">${esc(p.nome)}</button>`).join("")}</div>
     <p class="sub">${prop() ? "Lançamentos vão para <b>" + esc(PROPS[prop()].titulo) + "</b>." : "<b>Escolha acima para qual propriedade vai lançar.</b>"}</p>
@@ -241,10 +250,17 @@ TELAS.inicio = async () => {
       <button class="botao-grande" data-ir="trato"><span class="ic">🌵</span><b>Trato</b><small>palma, ração, bagaço</small></button>
       <button class="botao-grande" data-ir="ocorrencia"><span class="ic">🐄</span><b>Ocorrência</b><small>cio, parto, doente, remédio</small></button>
       <button class="botao-grande" data-ir="chuva"><span class="ic">🌧️</span><b>Chuva</b><small>pluviômetro</small></button>
-      ${dono ? `<button class="botao-grande" data-ir="consulta"><span class="ic">📊</span><b>Consulta</b><small>rebanho, fichas, leite, dinheiro</small></button>
-      <button class="botao-grande" data-ir="comprovante"><span class="ic">🧾</span><b>Comprovante</b><small>foto ou PDF de pagamento</small></button>
-      <button class="botao-grande" data-ir="ajustes"><span class="ic">⚙️</span><b>Avisos</b><small>e-mail e Telegram</small></button>` : ""}
+      <button class="botao-grande" data-ir="batida"><span class="ic">🥣</span><b>Ração (batida)</b><small>lista de pesagem</small></button>
     </div>
+    ${dono ? `<h2>Gestão${nomeP ? " — " + esc(nomeP) : ""}</h2><div class="grade">
+      <button class="botao-grande" data-aba-c="rebanho"><span class="ic">🐮</span><b>Rebanho</b><small>animais e fichas</small></button>
+      <button class="botao-grande" data-aba-c="leite"><span class="ic">📈</span><b>Leite</b><small>gráficos e qualidade</small></button>
+      <button class="botao-grande" data-aba-c="dinheiro"><span class="ic">💰</span><b>Financeiro</b><small>mês, contas, gráficos</small></button>
+      <button class="botao-grande" data-ir="dinheiro"><span class="ic">✍️</span><b>Lançar dinheiro</b><small>gasto ou venda, sem sinal também</small></button>
+      <button class="botao-grande" data-aba-c="resumo"><span class="ic">📊</span><b>Painel</b><small>resumo, avisos, índices</small></button>
+      <button class="botao-grande" data-ir="comprovante"><span class="ic">🧾</span><b>Comprovante</b><small>foto ou PDF de pagamento</small></button>
+      <button class="botao-grande" data-ir="ajustes"><span class="ic">⚙️</span><b>Avisos</b><small>e-mail e Telegram</small></button>
+    </div>` : ""}
     ${fila().length ? `<div class="cartao" style="margin-top:12px"><b>${fila().length} lançamento(s) guardado(s) neste celular</b><p class="sub">Vão sozinhos quando tiver sinal.</p><button class="btn peq" id="enviar-ja">Enviar agora</button></div>` : ""}
     <h2>Minhas tarefas</h2>
     <div class="cartao">${tarefas.length ? tarefas.map(t => `<div class="tarefa ${feitas.has(t.id) ? "feita" : ""}"><div><b>${esc(t.texto)}</b><small class="sub">${t.prazo ? "até " + esc(t.prazo) : ""}${dono && t.para ? " · " + esc(t.para) : ""}</small></div>
@@ -254,8 +270,12 @@ TELAS.inicio = async () => {
     ${prod.length ? `<h2>Leite dos últimos dias${nomeP ? " — " + esc(nomeP) : ""}</h2><div class="cartao"><table class="tab">${prod.map(p => `<tr><td>${esc(p.data)}</td><td class="n"><b>${p.litros != null ? esc(virgula(p.litros)) + " L" : esc(virgula(p.kg)) + " kg (leiteiro)"}</b></td></tr>`).join("")}</table></div>` : ""}
     ${dono && dp.financeiro ? `<h2>Dinheiro — ${esc(nomeP)} (${esc(dp.financeiro.mes || "")})</h2><div class="cartao">${(dp.financeiro.linhas || []).map(l => `<div class="resumo-linha"><span>${esc(l[0])}</span><b>${esc(l[1])}</b></div>`).join("")}</div>` : ""}
     ${dono && dp.antigo ? `<p class="sub">Os números da ${esc(nomeP)} aparecem depois que a caixa postal for atualizada (versão 1.3).</p>` : ""}
-    <div class="rodape"><button id="atualizar">Atualizar</button> · <button id="aparencia">Aparência</button> · <button id="sair">Sair</button><br>versão ${VERSAO}</div>`;
+    <div class="rodape"><button id="atualizar">Atualizar</button> · <button id="aparencia">Aparência</button> · <button id="sair">Sair</button>${s.papel === "dono" ? `<br><button id="previa">${previa ? "Voltar à visão do dono" : "👁 Ver como funcionário"}</button>` : ""}<br>versão ${VERSAO}</div>`;
   $$("[data-ir]").forEach(b => b.onclick = () => ir(b.dataset.ir));
+  $$("[data-aba-c]").forEach(b => b.onclick = () => { if (!prop()) return aviso("Escolha a propriedade acima."); guarda.gravar("consulta_aba", b.dataset.abaC); ir("consulta"); });
+  const trocaPrevia = () => { guarda.gravar("visao_func", !visaoFunc()); aviso(visaoFunc() ? "Agora você vê o app como o funcionário." : "De volta à visão do dono."); mostrar("inicio"); };
+  const bp = $("#previa"); if (bp) bp.onclick = trocaPrevia;
+  const sp = $("#sair-previa"); if (sp) sp.onclick = trocaPrevia;
   $$("[data-prop]").forEach(b => b.onclick = () => { guarda.gravar("prop", b.dataset.prop); mostrar("inicio"); });
   $$("[data-concluir]").forEach(b => b.onclick = () => {
     const t = tarefas.find(x => x.id === b.dataset.concluir);
@@ -295,7 +315,7 @@ function blocoConcentradoC(k) {
     ${tabC(k.vacas.map(x => ({ v: x.codigo, l: num1(x.litros_dia), k: num1(x.kg_dia), r: x.litros_por_kg != null ? num1(x.litros_por_kg, 2) : "—" })), [["v", "Vaca"], ["l", "L/dia"], ["k", "kg/dia"], ["r", "L por kg"]])}</div>`;
 }
 async function dadosConsulta() {
-  const s = sessao(); if (!s || s.papel !== "dono") throw new Error("A consulta é só para o dono.");
+  if (!ehDono()) throw new Error(visaoFunc() ? "Na visão do funcionário a consulta não aparece. Volte à visão do dono no Início." : "A consulta é só para o dono.");
   if (!prop()) throw new Error("Escolha a propriedade no Início.");
   const r = await carregarResumo();
   const dp = dadosProp(r);
@@ -324,14 +344,29 @@ TELAS.consulta = async () => {
       <div class="cartao">${lista.length ? lista.map(a => `<button class="item-animal" data-ficha="${esc(a.brinco)}"><div><b>${esc(a.codigo)}${a.nome ? " " + esc(a.nome) : ""}</b><small>${esc([a.fisico ? "brinco " + a.fisico : "sem brinco", a.categoria, GRUPOS_C[a.grupo] && a.grupo !== "novilhas" && a.grupo !== "bezerras" && a.grupo !== "bezerros" ? GRUPOS_C[a.grupo] : "", a.n_lact ? a.n_lact + "ª lact." : "", a.del != null ? "DEL " + a.del : "", a.dea != null ? "DEA " + a.dea + (c.meta_dea && a.dea > c.meta_dea ? " ●" : "") : "", a.mae ? "mãe " + a.mae : ""].filter(Boolean).join(" · "))}</small>${a.repro === "prenhe" ? `<small>Prenhe${a.dias_gestacao != null ? " há " + a.dias_gestacao + " d" : ""}${a.parto_previsto ? " · parto " + esc(a.parto_previsto) + esc(prazoC(a.dias_parto)) : ""}</small>` : a.repro === "coberta" ? `<small>Coberta — aguardando diagnóstico</small>` : a.repro === "vazia" ? `<small>Vazia</small>` : ""}${a.proximo ? `<small class="${a.proximo.atrasado ? "atrasado" : ""}">${esc(a.proximo.data)} · ${esc(a.proximo.tipo)}${esc(prazoC(a.dias_prox))}</small>` : ""}${a.carencia_ate ? `<small class="atrasado">Leite em carência até ${esc(a.carencia_ate)}</small>` : ""}${a.descarte_previsto ? `<small class="atrasado">Descarte previsto ${esc(a.descarte_previsto)}${a.descarte_motivo ? " — " + esc(a.descarte_motivo) : ""}</small>` : ""}${a.meta_peso != null ? `<small class="${a.abaixo_meta ? "atrasado" : ""}">${a.peso != null ? esc(num1(a.peso, 0)) + " kg · " : ""}meta ${esc(num1(a.meta_peso, 0))} kg (${a.pct_meta}%)</small>` : ""}</div><span class="lado">${a.media7 != null ? esc(num1(a.media7)) + " L" : a.idade_meses != null ? a.idade_meses + " m" : ""} ›</span></button>`).join("") : `<p class="sub">Nenhum animal.</p>`}</div>`;
   } else if (aba === "leite") {
     const d = (c.leite && c.leite.diario) || [];
-    corpo = `<h2>Dia a dia (últimos ${d.length})</h2><div class="cartao">${d.length ? barras(d.slice().reverse().map(x => ({ r: brData(x.d).slice(0, 5), v: x.litros != null ? x.litros : x.kg })), "") + `<p class="nota">Litros medidos; quando só há a pesagem do leiteiro, mostra os kg.</p>` : `<p class="sub">Sem leite lançado.</p>`}</div>
-      <h2>Por mês</h2><div class="cartao">${tabC(((c.leite && c.leite.mensal) || []).slice().reverse().map(m => ({ ...m, litros: num1(m.litros, 0), media: num1(m.media), kg: m.kg ? num1(m.kg, 0) : "—" })), [["mes", "Mês"], ["litros", "Litros"], ["media", "Média/dia"], ["kg", "Kg leiteiro"]])}</div>
+    const per = guarda.ler("leite_periodo", 30);
+    const pts = d.map(x => ({ d: x.d, v: x.litros != null ? x.litros : x.kg })).filter(x => x.v != null).slice(-per);
+    const ini = pts.length ? pts[0].d : "";
+    const mcs = ((c.leite && c.leite.marcos) || []).filter(m => m.d >= ini);
+    const vals = pts.map(x => x.v), med = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    corpo = `<h2>Leite por dia</h2><div class="cartao"><div class="chips">${[[15, "15 dias"], [30, "30 dias"], [60, "60 dias"], [90, "90 dias"]].map(([n, t]) => `<button data-per="${n}" class="${per === n ? "on" : ""}">${t}</button>`).join("")}</div>
+      ${pts.length ? graficoLinha(pts, mcs) + `<div class="resumo-linha"><span>Média no período</span><b>${num1(med)} por dia</b></div><div class="resumo-linha"><span>Maior · menor dia</span><b>${num1(Math.max(...vals))} · ${num1(Math.min(...vals))}</b></div>
+      <p class="nota">Linha cheia: litros do dia (quando só há a pesagem do leiteiro, os kg). Tracejada: média de 7 dias.${mcs.length ? " Números no gráfico = marcos de manejo (lista abaixo)." : ""}</p>` : `<p class="sub">Sem leite lançado.</p>`}</div>
+      ${mcs.length ? `<h2>Marcos de manejo no período</h2><div class="cartao">${mcs.map((m, i) => linhaR(`${i + 1}. ${brData(m.d)}`, m.txt)).join("")}</div>` : ""}
+      <h2>Por mês</h2>${((c.leite && c.leite.mensal) || []).length > 1 ? `<div class="cartao">${barras(c.leite.mensal.slice(-12).map(m => ({ r: mesCurto(m.mes), v: m.media })), "")}<p class="nota">Média por dia em cada mês.</p></div>` : ""}<div class="cartao">${tabC(((c.leite && c.leite.mensal) || []).slice().reverse().map(m => ({ ...m, litros: num1(m.litros, 0), media: num1(m.media), kg: m.kg ? num1(m.kg, 0) : "—" })), [["mes", "Mês"], ["litros", "Litros"], ["media", "Média/dia"], ["kg", "Kg leiteiro"]])}</div>
       ${blocoQualidadeC(c.leite && c.leite.qualidade)}${blocoConcentradoC(c.leite && c.leite.concentrado)}
-      ${(c.leite && c.leite.marcos || []).length ? `<h2>Marcos de manejo</h2><div class="cartao">${c.leite.marcos.slice().reverse().map(m => linhaR(brData(m.d), m.txt)).join("")}</div>` : ""}`;
+      `;
   } else if (aba === "dinheiro") {
     const fz = c.financeiro || {};
-    corpo = `<div class="cartao">${fz.rotulo ? `<p class="sub">${esc(fz.rotulo)}</p>` : ""}${linhaR("Receitas", real(fz.receita))}${linhaR("Custo operacional (COE)", real(fz.coe))}${linhaR("Investimentos", real(fz.inv))}${linhaR("Resultado", real(fz.resultado))}${fz.custo_litro != null ? linhaR("Custo por litro", real(fz.custo_litro)) : ""}${fz.margem_litro != null ? linhaR("Margem por litro", real(fz.margem_litro)) : ""}${fz.custo_litro_vendido != null ? linhaR("Custo por litro vendido", real(fz.custo_litro_vendido)) : ""}${fz.ponto_equilibrio_l != null ? linhaR("Ponto de equilíbrio", num1(fz.ponto_equilibrio_l, 0) + " L (vendeu " + num1(fz.litros_vend, 0) + " L)") : ""}${fz.margem_vaca_mes != null ? linhaR("Margem do leite por vaca/mês", real(fz.margem_vaca_mes)) : ""}</div>
+    const pend = fila().filter(x => x.tipo === "financeiro" && x.dados.propriedade === prop());
+    const serie = (fz.serie || []).filter(x => x.receita || x.coe);
+    corpo = `<button class="btn prim larga" id="lancar-din">✍️ Lançar gasto ou venda</button>
+      ${pend.length ? `<div class="cartao" style="margin-top:10px"><b>${pend.length} lançamento(s) guardado(s) neste celular</b><p class="sub">Ainda não estão nos números abaixo: entram quando tiver sinal e o notebook sincronizar.</p>${pend.map(x => linhaR(`${brData(x.dados.data)} · ${x.dados.lado === "receita" ? "venda" : "gasto"} ${x.dados.categoria_nome || x.dados.categoria}`, "R$ " + x.dados.valor)).join("")}</div>` : ""}
+      <h2>Mês ${esc(fz.rotulo || "")}</h2><div class="cartao">${fz.rotulo ? `<p class="sub">${esc(fz.rotulo)}</p>` : ""}${linhaR("Receitas", real(fz.receita))}${linhaR("Custo operacional (COE)", real(fz.coe))}${linhaR("Investimentos", real(fz.inv))}${linhaR("Resultado", real(fz.resultado))}${fz.custo_litro != null ? linhaR("Custo por litro", real(fz.custo_litro)) : ""}${fz.margem_litro != null ? linhaR("Margem por litro", real(fz.margem_litro)) : ""}${fz.custo_litro_vendido != null ? linhaR("Custo por litro vendido", real(fz.custo_litro_vendido)) : ""}${fz.ponto_equilibrio_l != null ? linhaR("Ponto de equilíbrio", num1(fz.ponto_equilibrio_l, 0) + " L (vendeu " + num1(fz.litros_vend, 0) + " L)") : ""}${fz.margem_vaca_mes != null ? linhaR("Margem do leite por vaca/mês", real(fz.margem_vaca_mes)) : ""}</div>
       ${fz.destino && (fz.destino.medido_l || fz.destino.vendido_l) ? `<h2>Destino do leite</h2><div class="cartao">${linhaR("Medido nas vacas", num1(fz.destino.medido_l, 0) + " L")}${linhaR("Vendido", num1(fz.destino.vendido_l, 0) + " L")}${linhaR("Casa", num1(fz.destino.casa_l, 0) + " L" + (fz.destino.casa_kg ? " + " + num1(fz.destino.casa_kg, 0) + " kg" : ""))}${linhaR("Bezerros", num1(fz.destino.bezerros_l, 0) + " L")}${fz.destino.sem_registro_l != null ? linhaR("Sem registro", num1(fz.destino.sem_registro_l, 0) + " L") : ""}</div>` : ""}
+      ${serie.length > 1 ? `<h2>Receita × custo por mês (${esc(String(serie[0].mes).slice(-4))})</h2><div class="cartao">${graficoBarras2(serie)}<p class="nota"><span class="leg l-rec"></span> receitas &nbsp; <span class="leg l-coe"></span> custo operacional (sem investimentos)</p></div>` : ""}
+      ${(fz.por_cat || []).length ? `<h2>Gastos do mês por categoria</h2><div class="cartao">${barrasR(fz.por_cat.map(x => ({ r: (((c.fin_opcoes || {}).despesa || []).find(o => o[0] === x.cat) || [0, x.nome])[1], v: x.valor })))}</div>` : ""}
+      ${(fz.lancamentos || []).length ? `<h2>Lançamentos do mês</h2><div class="cartao">${fz.lancamentos.slice(0, guarda.ler("fin_todos", false) ? 200 : 10).map(x => `<div class="resumo-linha"><span>${esc(x.data_br.slice(0, 5))} · ${esc(x.descricao || x.cat)}<small class="sub" style="display:block">${esc([x.lado === "receita" ? "receita" : "despesa", x.cat, x.quem].filter(Boolean).join(" · "))}</small></span><b class="${x.lado === "receita" ? "pos" : ""}">${x.lado === "receita" ? "+" : "−"} ${esc(real(x.valor))}</b></div>`).join("")}${fz.lancamentos.length > 10 ? `<button class="btn peq" id="fin-todos">${guarda.ler("fin_todos", false) ? "Mostrar só os 10 últimos" : "Ver todos (" + fz.lancamentos.length + ")"}</button>` : ""}</div>` : ""}
       <h2>Por centro de custo</h2><div class="cartao">${(fz.por_centro || []).map(x => linhaR(x.nome || x.centro, "desp. " + real(x.desp) + (x.rec ? " · rec. " + real(x.rec) : ""))).join("") || `<p class="sub">Nada no período.</p>`}</div>
       <h2>Contas em aberto</h2><div class="cartao">${(fz.contas || []).filter(x => x.situacao !== "paga").map(x => `<div class="alerta"><span class="ponto p-${x.dias != null && x.dias < 0 ? "vermelho" : x.dias != null && x.dias <= 7 ? "amarelo" : "azul"}"></span><div><b>${x.tipo === "receber" ? "A receber" : "A pagar"} ${esc(real(x.saldo))}</b><small>${esc(x.descricao || "")}${x.pessoa ? " · " + esc(x.pessoa) : ""} · vence ${esc(x.vencimento)}</small></div></div>`).join("") || `<p class="sub">Nenhuma.</p>`}</div>
       ${(fz.fluxo || []).length ? `<h2>Fluxo de caixa</h2><div class="cartao">${tabC(fz.fluxo.slice().reverse().map(x => ({ mes: x.mes, e: real(x.entradas), s: real(x.saidas), a: real(x.acumulado) })), [["mes", "Mês"], ["e", "Entradas"], ["s", "Saídas"], ["a", "Acumulado"]])}</div>` : ""}`;
@@ -359,6 +394,9 @@ TELAS.consulta = async () => {
   ligarVoltar();
   $$("[data-aba]").forEach(x => x.onclick = () => { guarda.gravar("consulta_aba", x.dataset.aba); TELAS.consulta(); });
   $$("[data-g]").forEach(x => x.onclick = () => { guarda.gravar("consulta_grupo", x.dataset.g); TELAS.consulta(); });
+  $$("[data-per]").forEach(x => x.onclick = () => { guarda.gravar("leite_periodo", Number(x.dataset.per)); TELAS.consulta(); });
+  const ld = $("#lancar-din"); if (ld) ld.onclick = () => ir("dinheiro");
+  const ft = $("#fin-todos"); if (ft) ft.onclick = () => { guarda.gravar("fin_todos", !guarda.ler("fin_todos", false)); TELAS.consulta(); };
   $$("[data-ficha]").forEach(x => x.onclick = () => ir("ficha", { brinco: x.dataset.ficha }));
   const bc = $("#busca-c"); if (bc) bc.onchange = () => { guarda.gravar("consulta_busca", bc.value.trim()); TELAS.consulta(); };
   const bt = $("#busca-ct"); if (bt) bt.onchange = () => { guarda.gravar("contato_busca", bt.value.trim()); TELAS.consulta(); };
@@ -384,6 +422,125 @@ TELAS.ficha = async ({ brinco } = {}) => {
     ${(f.pesagens || []).length ? `<h2>Pesagens</h2><div class="cartao">${tabC(f.pesagens.slice().reverse(), [["data_br", "Data"], ["peso", "Kg"], ["metodo", "Método"]])}</div>` : ""}
     ${f.memoria ? `<h2>Ficha (contexto)</h2><div class="cartao pre">${esc(f.memoria.replace(/^#.*\n/, "").trim())}</div>` : ""}`;
   $("#voltar-c").onclick = () => ir("consulta");
+};
+
+/* ---------------------------------------------------------------- gráficos (SVG simples, sem biblioteca; v1.6) */
+const mesCurto = m => { const [mm, aa] = String(m).split("/"); return (["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][Number(mm) - 1] || mm) + "/" + String(aa || "").slice(-2); };
+const diaN = iso => Math.round(new Date(iso.slice(0, 10) + "T12:00:00").getTime() / 864e5);
+const kR = v => v >= 1000 ? (v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " mil" : Math.round(v).toLocaleString("pt-BR");
+function escalaY(max) { const bruto = max / 4, p = Math.pow(10, Math.floor(Math.log10(bruto || 1))); const passo = [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= bruto) || bruto; return { passo, topo: passo * 4 }; }
+/* linha do leite por dia + média de 7 dias + marcos de manejo numerados. Tocar no gráfico mostra o dia mais próximo. */
+function graficoLinha(pts, marcos = []) {
+  const W = 340, H = 200, E = 34, D = 8, T = 18, B = 24, w = W - E - D, h = H - T - B;
+  const d0 = diaN(pts[0].d), d1 = Math.max(diaN(pts[pts.length - 1].d), d0 + 1);
+  const { passo, topo } = escalaY(Math.max(...pts.map(p => p.v), 1));
+  const x = d => E + (diaN(d) - d0) / (d1 - d0) * w, y = v => T + h - v / topo * h;
+  const grade = [0, 1, 2, 3, 4].map(i => `<line class="g-grade" x1="${E}" x2="${W - D}" y1="${y(i * passo)}" y2="${y(i * passo)}"/><text class="g-txt" x="${E - 4}" y="${y(i * passo) + 4}" text-anchor="end">${num1(i * passo, 1)}</text>`).join("");
+  /* buraco de mais de 7 dias sem lançamento: a linha para e recomeça (não inventa os dias do meio) */
+  const caminho = lst => lst.map((p, i) => `${i && diaN(p.d) - diaN(lst[i - 1].d) <= 7 ? "L" : "M"}${x(p.d).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+  const mm = pts.map((p, i) => { const j = pts.slice(Math.max(0, i - 6), i + 1); return { d: p.d, v: j.reduce((a, b) => a + b.v, 0) / j.length }; });
+  const rot = [pts[0], pts[Math.floor(pts.length / 2)], pts[pts.length - 1]].map((p, i) => `<text class="g-txt" x="${x(p.d)}" y="${H - 6}" text-anchor="${["start", "middle", "end"][i]}">${brData(p.d).slice(0, 5)}</text>`).join("");
+  const mc = marcos.map((m, i) => `<line class="g-marco" x1="${x(m.d)}" x2="${x(m.d)}" y1="${T}" y2="${T + h}"/><circle class="g-marco-c" cx="${x(m.d)}" cy="${T - 8}" r="7"/><text class="g-marco-t" x="${x(m.d)}" y="${T - 4.5}" text-anchor="middle">${i + 1}</text>`).join("");
+  const pontos = pts.length <= 31 ? pts.map(p => `<circle class="g-ponto" cx="${x(p.d).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="2.6"/>`).join("") : "";
+  const dados = esc(JSON.stringify(pts.map(p => [p.d, p.v, x(p.d) / W])));
+  return `<div class="grafico" data-pts="${dados}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Leite por dia">${grade}${mc}
+    <path class="g-media" d="${caminho(mm)}"/><path class="g-linha" d="${caminho(pts)}"/>${pontos}${rot}<line class="g-cursor" x1="-9" x2="-9" y1="${T}" y2="${T + h}"/></svg>
+    <div class="g-leitura">Toque no gráfico para ver o dia.</div></div>`;
+}
+document.addEventListener("click", e => {
+  const g = e.target.closest && e.target.closest(".grafico"); if (!g) return;
+  const pts = JSON.parse(g.dataset.pts || "[]"); if (!pts.length) return;
+  const r = g.querySelector("svg").getBoundingClientRect(), fr = (e.clientX - r.left) / r.width;
+  const p = pts.reduce((a, b) => Math.abs(b[2] - fr) < Math.abs(a[2] - fr) ? b : a);
+  const c = g.querySelector(".g-cursor"); c.setAttribute("x1", p[2] * 340); c.setAttribute("x2", p[2] * 340);
+  g.querySelector(".g-leitura").innerHTML = `<b>${brData(p[0])}</b>: ${num1(p[1])}`;
+});
+/* receita × custo operacional por mês (barras lado a lado) */
+function graficoBarras2(serie) {
+  const W = 340, H = 190, E = 40, D = 4, T = 10, B = 22, w = W - E - D, h = H - T - B;
+  const { passo, topo } = escalaY(Math.max(...serie.map(s => Math.max(s.receita || 0, s.coe || 0)), 1));
+  const y = v => T + h - v / topo * h, n = serie.length, lg = w / n, bw = Math.min(14, lg / 2 - 2);
+  const grade = [0, 1, 2, 3, 4].map(i => `<line class="g-grade" x1="${E}" x2="${W - D}" y1="${y(i * passo)}" y2="${y(i * passo)}"/><text class="g-txt" x="${E - 4}" y="${y(i * passo) + 4}" text-anchor="end">${kR(i * passo)}</text>`).join("");
+  const barras_ = serie.map((s, i) => { const cx = E + lg * i + lg / 2; return `<rect class="g-rec" x="${cx - bw - 1}" y="${y(s.receita || 0)}" width="${bw}" height="${T + h - y(s.receita || 0)}" rx="2"><title>${esc(s.mes)} receitas ${real(s.receita)}</title></rect><rect class="g-coe" x="${cx + 1}" y="${y(s.coe || 0)}" width="${bw}" height="${T + h - y(s.coe || 0)}" rx="2"><title>${esc(s.mes)} custo ${real(s.coe)}</title></rect><text class="g-txt" x="${cx}" y="${H - 6}" text-anchor="middle">${esc(s.curta || String(s.mes).slice(0, 2))}</text>`; }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Receita e custo por mês">${grade}${barras_}</svg>
+    ${tabC(serie.slice().reverse().map(s => ({ mes: s.mes, rec: real(s.receita), coe: real(s.coe), res: real((s.receita || 0) - (s.coe || 0)) })), [["mes", "Mês"], ["rec", "Receitas"], ["coe", "Custo op."], ["res", "Sobra"]])}`;
+}
+/* barras deitadas com rótulo em cima (nomes longos) e valor em reais */
+const barrasR = pts => { const max = Math.max(...pts.map(p => p.v || 0), 1); return `<div class="barras-r">${pts.map(p => `<div><span>${esc(p.r)}</span><b>${esc(real(p.v))}</b><i style="width:${Math.max(1, Math.round((p.v || 0) / max * 100))}%"></i></div>`).join("")}</div>`; };
+
+/* ---------------------------------------------------------------- lançar dinheiro (dono; vai pela fila, funciona sem sinal) */
+const FIN_PADRAO = {
+  despesa: [["alimentacao", "Alimentação", "concentrado, volumoso, núcleo/mineral, sal"], ["mao_de_obra", "Mão de obra", "diaristas, vaqueiro, encargos"], ["sanidade", "Sanidade", "vacinas, remédios, veterinário"], ["reproducao", "Reprodução", "sêmen, inseminação"], ["palmal", "Palmal", "adubo, calcário, mudas, capina"], ["energia", "Energia", "luz, gerador"], ["combustivel", "Combustível", "diesel, gasolina"], ["manutencao", "Manutenção", "consertos, peças, cercas"], ["frete", "Frete", "transporte"], ["impostos_taxas", "Impostos e taxas", "ITR, ADAB, GTA"], ["ordenha_higiene", "Higiene da ordenha", "detergente, dipping, filtros"], ["outros", "Outros", ""]],
+  receita: [["leite", "Leite", "venda de leite"], ["vaca_descarte", "Vaca de descarte", ""], ["bezerro", "Bezerro", ""], ["bezerra", "Bezerra", ""], ["novilha", "Novilha", ""], ["palma", "Palma", ""], ["esterco", "Esterco", ""], ["outros", "Outros", ""]],
+};
+TELAS.dinheiro = async () => {
+  if (!ehDono()) return ir("inicio");
+  if (!prop()) return escolherProp(() => mostrar("dinheiro"));
+  const r = await carregarResumo();
+  const dp = dadosProp(r) || {};
+  const op = (dp.consulta && dp.consulta.fin_opcoes) || FIN_PADRAO;
+  const nomeCat = (lado, k) => ((op[lado] || []).find(x => x[0] === k) || [k, k])[1];
+  const optCat = lado => `<option value="">Escolha…</option>` + (op[lado] || []).map(([k, n, dsc]) => `<option value="${esc(k)}">${esc(n)}${dsc ? " — " + esc(dsc) : ""}</option>`).join("");
+  const outra = prop() === "TR" ? "WM" : "TR";
+  formulario("Lançar dinheiro", `
+    <label>É um</label>${radios("lado", [["despesa", "Gasto (despesa)"], ["receita", "Venda / receita"]], "despesa")}
+    ${campoData()}
+    <label>Valor (R$)</label><input name="valor" inputmode="decimal" placeholder="ex.: 350,00" required>
+    <div data-lado="despesa"><label>Categoria</label><select name="cat_d">${optCat("despesa")}</select></div>
+    <div data-lado="receita"><label>O que foi vendido</label><select name="cat_r">${optCat("receita")}</select></div>
+    <label>Descrição</label><input name="descricao" placeholder="ex.: diária do Coroa, 10 sacos de milho">
+    <div data-lado="despesa">
+      <label>Pago a (quem recebeu)</label><input name="pago_a" placeholder="opcional">
+      <label>Forma de pagamento</label>${radios("forma", [["pix", "Pix"], ["dinheiro", "Dinheiro"], ["cartao", "Cartão"], ["boleto", "Boleto"], ["transferencia", "Transferência"]])}
+      <label>De quem é o gasto?</label>${radios("dividir", [["nao", "Só da " + PROPS[prop()].nome], ["sim", "Dividir com a " + PROPS[outra].nome]], "nao")}
+      <div data-div="sim"><label>Parte da ${esc(PROPS[prop()].nome)} (%)</label><input name="pct" inputmode="numeric" placeholder="ex.: 50"><p class="nota">O resto fica com a ${esc(PROPS[outra].nome)}. Salário e encargos do Eliésio são 100% da TR (não se dividem).</p></div>
+      <div data-pagou><label>Quem pagou?</label>${radios("pago_por", [["wagner", "Wagner"], ["bob", "Dr. Bob"]])}<p class="nota">Na TR - Paquetá, o que o Wagner paga entra sozinho no acerto com o Bob.</p></div>
+    </div>
+    <div data-lado="receita">
+      <label>Comprador</label><input name="comprador" placeholder="opcional">
+      <label>Animal vendido (se for venda de animal)</label><select name="brinco">${optAnimais(animais(r), "Nenhum")}</select>
+    </div>
+    <label>Quantidade e unidade (opcional)</label><div class="linha-2"><input name="qtd" inputmode="decimal" placeholder="ex.: 10"><input name="unidade" placeholder="ex.: sacos, L, cab"></div>
+    <label>Observação</label><input name="obs" placeholder="opcional">
+    <p class="nota">Sem sinal, fica guardado no celular e vai depois. Entra nas planilhas quando o notebook sincronizar.</p>`,
+    f => {
+      const lado = marcado(f, "lado"); exigir(lado, "Diga se é gasto ou venda.");
+      const v = numero(val(f, "valor").replace(/\./g, (m, i, s) => /,/.test(s) ? "" : m));
+      exigir(v != null && v > 0 && v < 1e7, "Informe o valor em reais.");
+      const d = { lado, data: dataOk(val(f, "data")), valor: String(Math.round(v * 100) / 100), descricao: val(f, "descricao"), qtd: val(f, "qtd"), unidade: val(f, "unidade"), obs: val(f, "obs") };
+      if (d.qtd) exigir(numero(d.qtd) != null, "Quantidade deve ser um número.");
+      if (lado === "despesa") {
+        d.cat_d = val(f, "cat_d"); exigir(d.cat_d, "Escolha a categoria do gasto."); d.categoria = d.cat_d;
+        d.pago_a = val(f, "pago_a"); d.forma = marcado(f, "forma"); d.dividir = marcado(f, "dividir") || "nao";
+        if (d.dividir === "sim") {
+          const pct = numero(val(f, "pct")); exigir(pct != null && pct > 0 && pct < 100, "Informe a parte desta propriedade (entre 1 e 99%).");
+          d.pct = String(pct); d.rateio = `${prop()}=${pct},${outra}=${Math.round((100 - pct) * 100) / 100}`;
+        }
+        if (prop() === "TR" || d.dividir === "sim") { d.pago_por = marcado(f, "pago_por"); exigir(d.pago_por, "Diga quem pagou (Wagner ou Dr. Bob)."); }
+      } else {
+        d.cat_r = val(f, "cat_r"); exigir(d.cat_r, "Escolha o que foi vendido."); d.categoria = d.cat_r;
+        d.comprador = val(f, "comprador"); d.brinco = val(f, "brinco");
+      }
+      d.categoria_nome = nomeCat(lado, d.categoria);
+      return d;
+    },
+    d => {
+      const rv = "R$ " + Number(d.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+      let t = `${d.lado === "receita" ? "VENDA / RECEITA" : "GASTO (DESPESA)"}\nData: ${brData(d.data)}\nValor: ${rv}\nCategoria: ${d.categoria_nome}${d.descricao ? "\nDescrição: " + d.descricao : ""}${d.qtd ? "\nQuantidade: " + d.qtd + " " + d.unidade : ""}`;
+      if (d.lado === "despesa") t += `${d.pago_a ? "\nPago a: " + d.pago_a : ""}${d.forma ? "\nForma: " + d.forma : ""}${d.rateio ? "\nDividido: " + d.rateio.replace(/=/g, " ").replace(",", "% · ") + "%" : ""}${d.pago_por ? "\nQuem pagou: " + (d.pago_por === "bob" ? "Dr. Bob" : "Wagner") : ""}`;
+      else t += `${d.comprador ? "\nComprador: " + d.comprador : ""}${d.brinco ? "\nAnimal: " + d.brinco + " (depois registrar a saída dele)" : ""}`;
+      return t + (d.obs ? "\nObs.: " + d.obs : "");
+    },
+    "financeiro",
+    f => {
+      const atual = () => {
+        const lado = marcado(f, "lado") || "despesa", div = marcado(f, "dividir") === "sim";
+        $$("[data-lado]", f).forEach(b => b.style.display = b.dataset.lado === lado ? "" : "none");
+        $$("[data-div]", f).forEach(b => b.style.display = div ? "" : "none");
+        $$("[data-pagou]", f).forEach(b => b.style.display = prop() === "TR" || div ? "" : "none");
+      };
+      $$("[name=lado],[name=dividir]", f).forEach(x => x.onchange = atual); atual();
+    });
 };
 
 function saudacao() { const h = new Date().getHours(); return h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite"; }
@@ -628,6 +785,27 @@ Ordenhadas: ${s.ord} de ${s.ord + s.nao}${nao.length ? " | Não ordenhada: " + n
   desenhar();
 };
 
+/* ---------------------------------------------------------------- lista de pesagem do concentrado (só leitura) */
+TELAS.batida = async () => {
+  if (!prop()) return escolherProp(() => mostrar("batida"));
+  const r = await carregarResumo();
+  const ls = (r.lotes && r.lotes.batida && r.lotes.batida[prop()]) || [];
+  const kg = Number(guarda.ler("batida_kg", 500)) || 500;
+  app.innerHTML = `${voltar()}${faixaProp()}<h1>Ração — batida</h1>
+    <p class="sub">Lista de pesagem do concentrado em uso (calculada no notebook${r.gerado_em ? " em " + esc(r.gerado_em) : ""}).</p>
+    <div class="cartao"><label>Tamanho da batida (kg)</label><input id="bt-kg" inputmode="decimal" value="${kg}">
+      <p class="nota">Em 500 kg a lista já vem arredondada para sacos inteiros quando dá. Em outro tamanho é só a conta proporcional (pese na balança).</p></div>
+    ${ls.length ? ls.map(c => {
+      const f = kg / c.kg;
+      return `<div class="cartao"><b>${esc(c.codigo)} — ${esc(c.nome)}</b><small class="sub" style="display:block">versão ${esc(c.versao)}</small>
+        <table class="tab">${c.linhas.map(x => `<tr><td>${esc(x.alimento)}</td><td class="n"><b>${num1v(f === 1 ? x.kg : x.pct * kg / 100)} kg</b>${f === 1 ? `<small class="sub" style="display:block">${esc(x.como)}</small>` : ""}</td></tr>`).join("")}
+        <tr><td><b>Total</b></td><td class="n"><b>${num1v(f === 1 ? c.total : kg)} kg</b></td></tr></table></div>`; }).join("")
+      : `<p class="sub">Nenhum concentrado em uso cadastrado no notebook${prop() === "TR" ? " para a TR" : ""}.</p>`}`;
+  ligarVoltar();
+  const tp = $("#trocar-prop"); if (tp) tp.onclick = () => escolherProp(() => mostrar("batida"));
+  $("#bt-kg").onchange = e => { const v = numero(e.target.value); if (v && v >= 10 && v <= 20000) { guarda.gravar("batida_kg", v); TELAS.batida(); } };
+};
+
 /* ---------------------------------------------------------------- trato */
 TELAS.trato = async () => {
   const r = await carregarResumo();
@@ -712,7 +890,7 @@ TELAS.chuva = async () => {
 
 /* ---------------------------------------------------------------- comprovante (dono) */
 TELAS.comprovante = async () => {
-  if (sessao().papel !== "dono") return ir("inicio");
+  if (!ehDono()) return ir("inicio");
   app.innerHTML = `${voltar()}<h1>Comprovante</h1><form id="f" class="cartao">
     <label>Foto ou PDF</label><input type="file" name="arq" accept="image/*,application/pdf" required>
     <label>Pago com</label>${radios("pago_com", [["caixa", "Dinheiro da fazenda"], ["meu", "Meu dinheiro (vira aporte)"]], "caixa")}
@@ -751,7 +929,7 @@ async function reduzirImagem(arq) {
 
 /* ---------------------------------------------------------------- ajustes (dono): Telegram */
 TELAS.ajustes = async () => {
-  if (sessao().papel !== "dono") return ir("inicio");
+  if (!ehDono()) return ir("inicio");
   const r = await carregarResumo(true);
   app.innerHTML = `${voltar()}<h1>Avisos</h1>
     <div class="cartao"><b>E-mail</b><p class="sub">Ligado: cada envio do app gera um e-mail para você.</p></div>

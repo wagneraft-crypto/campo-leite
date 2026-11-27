@@ -157,3 +157,27 @@ input:focus, select:focus, textarea:focus { outline: 3px solid color-mix(in srgb
 label.chk { display: flex; align-items: center; gap: 10px; font-weight: 500; }
 label.chk input { width: 22px; height: 22px; min-height: 0; }
 button.link { background: none; border: 0; color: inherit; text-decoration: underline; font: inherit; padding: 0; cursor: pointer; }
+/* v1.6: gráficos, visão do funcionário, lançar dinheiro */
+.grafico svg, .cartao > svg { width: 100%; height: auto; display: block; }
+.g-grade { stroke: var(--borda); stroke-width: 1; }
+.g-txt { fill: var(--txt2); font-size: 10.5px; }
+.g-linha { fill: none; stroke: var(--verde2); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+.g-media { fill: none; stroke: var(--txt2); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .8; }
+.g-ponto { fill: var(--verde2); }
+.g-marco { stroke: var(--amar); stroke-width: 1.2; stroke-dasharray: 3 3; }
+.g-marco-c { fill: var(--amar); }
+.g-marco-t { fill: #fff; font-size: 10px; font-weight: 700; }
+.g-cursor { stroke: var(--azul); stroke-width: 1.2; }
+.g-leitura { font-size: 14px; color: var(--txt2); text-align: center; margin: 2px 0 6px; min-height: 20px; }
+.g-rec { fill: var(--verde2); }
+.g-coe { fill: #d9822b; }
+.leg { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; }
+.leg.l-rec { background: var(--verde2); } .leg.l-coe { background: #d9822b; }
+.barras-r { display: flex; flex-direction: column; gap: 9px; }
+.barras-r > div { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 14px; }
+.barras-r i { grid-column: 1 / -1; display: block; height: 9px; border-radius: 4px; background: #d9822b; }
+b.pos { color: var(--verde2); }
+.linha-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.faixa-previa { background: var(--amar); color: #fff; border-radius: 10px; padding: 10px 12px; margin: 4px 0 10px; font-size: 14.5px; }
+.faixa-previa .link { color: #fff; display: block; margin-top: 4px; font-weight: 600; }
+.rodape #previa { margin-top: 6px; }
